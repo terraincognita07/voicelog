@@ -176,15 +176,64 @@ Verify with `/pending` in Telegram, or:
 docker compose exec bot ls -la /data      # voicelog.db, .db-wal, .db-shm
 ```
 
-### 6. Expose the MCP server to Claude.ai
+### 6. Expose the MCP server to a Claude client
 
-The `mcp` container binds only to `127.0.0.1:8081` on the host. Claude.ai's
-remote MCP connector requires HTTPS — put a reverse proxy in front.
+The mcp container binds only to `127.0.0.1:8081`. How to expose it depends
+on which Claude client you use.
 
-Example nginx config (assuming `voicelog.example.com` points at the server
-and you have a Let's Encrypt cert via certbot):
+#### 6a. Claude Code (CLI on your laptop) — no domain needed
+
+Open an SSH tunnel from the server to your laptop:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@your-server
+```
+
+Or as a permanent entry in `~/.ssh/config`:
+
+```
+Host myserver
+  HostName your-server
+  User user
+  LocalForward 8081 127.0.0.1:8081
+```
+
+Then in Claude Code MCP config (`~/.claude/mcp.json` or via `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "voicelog": {
+      "url": "http://127.0.0.1:8081/mcp",
+      "headers": { "Authorization": "Bearer YOUR_MCP_TOKEN" }
+    }
+  }
+}
+```
+
+Done — no public DNS, no TLS, no reverse proxy.
+
+#### 6b. Claude.ai (web) — needs public HTTPS
+
+Claude.ai's *Add custom connector* dialog currently exposes **only OAuth
+fields** — there is no UI to set a custom `Authorization` header. To use
+it with our bearer-token server, put the token into the URL itself and
+let the reverse proxy inject the header before it reaches mcp.
+
+The configs below expose two routes side by side:
+
+| Route | Auth | Use case |
+|---|---|---|
+| `/mcp` | `Authorization: Bearer <token>` header | Claude Code, programmatic clients, monitoring |
+| `/t/<token>/mcp` | none (token is in URL) | Claude.ai web |
+
+Pick **nginx** or **Traefik**. For Traefik, pick docker-labels or file-provider
+depending on how your Traefik is configured.
+
+##### nginx
 
 ```nginx
+# Substitute YOUR_MCP_TOKEN and voicelog.example.com below.
 server {
     listen 443 ssl http2;
     server_name voicelog.example.com;
@@ -192,23 +241,144 @@ server {
     ssl_certificate     /etc/letsencrypt/live/voicelog.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/voicelog.example.com/privkey.pem;
 
-    location /mcp {
+    # Header-based route — Bearer required from the client.
+    location = /mcp {
         proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 600s;
         proxy_set_header Authorization $http_authorization;
-        proxy_pass_header Authorization;
+    }
+
+    # Path-based route — token in URL, nginx injects the header.
+    location = /t/YOUR_MCP_TOKEN/mcp {
+        proxy_pass http://127.0.0.1:8081/mcp;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 600s;
+        proxy_set_header Authorization "Bearer YOUR_MCP_TOKEN";
     }
 }
 ```
 
-In Claude.ai → Settings → Integrations → Add MCP server:
+##### Traefik — docker-provider (labels)
 
-```
-URL:   https://voicelog.example.com/mcp
-Token: <your MCP_TOKEN>
+In `docker-compose.override.yml`:
+
+```yaml
+services:
+  mcp:
+    ports: !reset []
+    networks:
+      - default
+      - traefik          # your Traefik docker network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+
+      # Router 1: /mcp with Bearer
+      - "traefik.http.routers.voicelog-mcp.rule=Host(`voicelog.example.com`) && Path(`/mcp`)"
+      - "traefik.http.routers.voicelog-mcp.entrypoints=websecure"
+      - "traefik.http.routers.voicelog-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.voicelog-mcp.service=voicelog-mcp"
+
+      # Router 2: /t/<token>/mcp without header
+      - "traefik.http.routers.voicelog-mcp-path.rule=Host(`voicelog.example.com`) && PathPrefix(`/t/YOUR_MCP_TOKEN/mcp`)"
+      - "traefik.http.routers.voicelog-mcp-path.entrypoints=websecure"
+      - "traefik.http.routers.voicelog-mcp-path.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.voicelog-mcp-path.middlewares=voicelog-stripprefix,voicelog-addauth"
+      - "traefik.http.routers.voicelog-mcp-path.service=voicelog-mcp"
+
+      - "traefik.http.middlewares.voicelog-stripprefix.stripprefix.prefixes=/t/YOUR_MCP_TOKEN"
+      - "traefik.http.middlewares.voicelog-addauth.headers.customrequestheaders.Authorization=Bearer YOUR_MCP_TOKEN"
+
+      - "traefik.http.services.voicelog-mcp.loadbalancer.server.port=8081"
+
+networks:
+  traefik:
+    external: true
+    name: traefik
 ```
 
-Claude calls `get_notes_in_range`, reads the transcripts, replies in plain
-language, then optionally calls `mark_analyzed` to mark the batch processed.
+##### Traefik — file-provider (`dynamic/voicelog.yml`)
+
+```yaml
+http:
+  routers:
+    voicelog-mcp:
+      rule: "Host(`voicelog.example.com`) && Path(`/mcp`)"
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+      service: voicelog-mcp
+
+    voicelog-mcp-path:
+      rule: "Host(`voicelog.example.com`) && PathPrefix(`/t/YOUR_MCP_TOKEN/mcp`)"
+      entryPoints: [websecure]
+      tls:
+        certResolver: letsencrypt
+      middlewares: [voicelog-stripprefix, voicelog-addauth]
+      service: voicelog-mcp
+
+  middlewares:
+    voicelog-stripprefix:
+      stripPrefix:
+        prefixes: ["/t/YOUR_MCP_TOKEN"]
+    voicelog-addauth:
+      headers:
+        customRequestHeaders:
+          Authorization: "Bearer YOUR_MCP_TOKEN"
+
+  services:
+    voicelog-mcp:
+      loadBalancer:
+        servers:
+          - url: "http://voicelog-mcp:8081"
+```
+
+Smoke-test both routes from outside the server:
+
+```bash
+# Header-based
+curl -s -X POST https://voicelog.example.com/mcp \
+  -H "Authorization: Bearer YOUR_MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+
+# Path-based
+curl -s -X POST https://voicelog.example.com/t/YOUR_MCP_TOKEN/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+```
+
+Both must return the four tool names.
+
+##### Register in Claude.ai
+
+Settings → Connectors → **Add custom connector**:
+
+- **Name:** `voicelog`
+- **Remote MCP server URL:** `https://voicelog.example.com/t/YOUR_MCP_TOKEN/mcp`
+- **OAuth fields:** leave blank
+
+Open a new chat — Claude sees four `voicelog__*` tools.
+
+#### 6c. Tradeoffs of path-based auth
+
+Putting the token into the URL means it appears in:
+
+- the reverse-proxy access log
+- browser history if you ever paste the URL into a browser
+- `docker inspect` for the proxy (labels mode) or the dynamic YAML (file mode)
+
+For personal self-host these are usually acceptable. To mitigate:
+
+- Prefer Claude Code over Claude.ai web (scenario 6a — no token in URL)
+- Rotate the token periodically: `openssl rand -hex 32`, update `.env`
+  **and** the proxy config, then `docker compose up -d mcp` + reload the
+  proxy
 
 ## Configuration reference
 
@@ -226,7 +396,9 @@ language, then optionally calls `mark_analyzed` to mark the batch processed.
 
 ## MCP tools
 
-Every request must carry `Authorization: Bearer $MCP_TOKEN`.
+Every request must be authenticated — either via `Authorization: Bearer $MCP_TOKEN`
+on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
+(see section 6b).
 
 - **`list_pending_notes(limit?: int = 50)`** —
   last N notes with `status='pending'`, newest first
