@@ -2,8 +2,14 @@
 
 Self-hosted Telegram voice journal with Claude analysis via MCP.
 
-[![ci](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml/badge.svg)](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml/badge.svg)](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/terraincognita07/voicelog)](https://goreportcard.com/report/github.com/terraincognita07/voicelog)
+[![Release](https://img.shields.io/github/v/release/terraincognita07/voicelog?display_name=tag)](https://github.com/terraincognita07/voicelog/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)](https://github.com/terraincognita07/voicelog)
+[![Self-hosted](https://img.shields.io/badge/Self--hosted-yes-2ea44f)](https://github.com/terraincognita07/voicelog)
+[![No telemetry](https://img.shields.io/badge/Telemetry-none-2ea44f)](https://github.com/terraincognita07/voicelog#security-model)
 
 **TL;DR.** Send voice messages to your private Telegram bot. They are
 transcribed locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
@@ -12,24 +18,20 @@ and stored in SQLite. Then in any Claude conversation, ask
 an MCP server you self-host.
 
 ```
-                       ┌─────────────┐
-   you 🎙 voice ─────► │ Telegram    │
-                       │   bot       │ ── ffmpeg ──► whisper.cpp ── text ─┐
-                       └──────┬──────┘                                    │
-                              │                                           │
-                              │ INSERT          ┌──────────────────────┐  │
-                              └────────────►    │ SQLite + FTS5        │ ◄┘
-                                                │ ./data/voicelog.db   │
-                                                └──────────┬───────────┘
-                                                           │ tools:
-                                                           │  list_pending_notes
-                                                           │  get_notes_in_range
-                                                           │  search_notes
-                                                           │  mark_analyzed
-                                                           ▼
-                                                ┌──────────────────────┐
-   Claude.ai ◄── MCP over HTTPS ─── nginx ───  │ voicelog-mcp         │
-                                                └──────────────────────┘
+    you 🎙 voice ──→ | Telegram  |
+                     |   bot     | — ffmpeg → whisper.cpp — text ─┐
+                                                                    │
+                     | INSERT                                        │
+                     └──────────→ | SQLite + FTS5    |  ←──────────┘
+                                  | ./data/voicelog.db |
+                                       │
+                                       │   tools:
+                                       │   list_pending_notes
+                                       │   get_notes_in_range
+                                       │   search_notes
+                                       │   mark_analyzed
+                                       ▼
+    Claude.ai ← MCP over HTTPS ── nginx ── | voicelog-mcp  |
 ```
 
 ## Why this exists
@@ -124,12 +126,11 @@ id -u && id -g
 
 ```bash
 chmod +x scripts/*.sh
-scripts/fetch-model.sh                 # ggml-small-q5_1.bin, ~190 MB
+scripts/fetch-model.sh                # ggml-small-q5_1.bin, ~190 MB
 ```
 
-Alternatives if you have RAM to spare:
-
-```bash
+Other options:
+```
 scripts/fetch-model.sh ggml-small-q8_0.bin     # +75 MB, marginal quality bump
 scripts/fetch-model.sh ggml-medium-q5_0.bin    # 314 MB, needs ~1.7 GB RAM
 ```
@@ -153,7 +154,7 @@ chown -R $(id -u):$(id -g) data
 ### 5. Build and run
 
 ```bash
-docker compose build           # ~2–3 min first time
+docker compose build          # ~2–3 min first time
 docker compose up -d
 docker compose logs -f bot mcp
 ```
@@ -173,7 +174,7 @@ And the bot replies:
 Verify with `/pending` in Telegram, or:
 
 ```bash
-docker compose exec bot ls -la /data       # voicelog.db, .db-wal, .db-shm
+docker compose exec bot ls -la /data      # voicelog.db, .db-wal, .db-shm
 ```
 
 ### 6. Expose the MCP server to Claude.ai
@@ -194,42 +195,18 @@ server {
 
     location /mcp {
         proxy_pass http://127.0.0.1:8081;
-        proxy_http_version 1.1;
-        proxy_buffering off;          # streamable HTTP / SSE
-        proxy_read_timeout 600s;
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass_header Authorization;
     }
 }
 ```
 
-Reload nginx (`nginx -t && systemctl reload nginx`) and verify:
+In Claude.ai → Settings → Integrations → Add MCP server:
 
-```bash
-curl -i https://voicelog.example.com/mcp                        # → 401 unauthorized
-curl -s -X POST https://voicelog.example.com/mcp \
-  -H "Authorization: Bearer $YOUR_MCP_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'           # → JSON with 4 tools
 ```
-
-Then in Claude.ai:
-
-1. **Settings → Connectors → Add custom connector**
-2. **URL:** `https://voicelog.example.com/mcp`
-3. **Authentication: custom header**
-   - Header name: `Authorization`
-   - Header value: `Bearer <your MCP_TOKEN>`
-4. **Save**
-
-Claude should now see four tools: `list_pending_notes`,
-`get_notes_in_range`, `search_notes`, `mark_analyzed`.
-
-### 7. Use it
-
-In any new Claude conversation:
-
-> What's been on my mind this week? Pull from voicelog, look at notes from
-> the last 7 days, and group them into themes. Mark analyzed when you're done.
+URL:   https://voicelog.example.com/mcp
+Token: <your MCP_TOKEN>
+```
 
 Claude calls `get_notes_in_range`, reads the transcripts, replies in plain
 language, then optionally calls `mark_analyzed` to mark the batch processed.
@@ -292,23 +269,22 @@ Project layout:
 
 ```
 cmd/
-  bot/main.go             # Telegram poller, transcription pipeline
-  mcp/main.go             # HTTP MCP server, bearer auth
+  bot/main.go          # Telegram poller, transcription pipeline
+  mcp/main.go          # HTTP MCP server, bearer auth
 internal/
-  db/                     # SQLite + FTS5, typed queries
-  whisper/                # HTTP client + ffmpeg wrapper
-  telegram/               # bot handlers and user gate
-  mcp/                    # tool registrations
+  whisper/             # HTTP client + ffmpeg wrapper
+  telegram/            # bot handlers and user gate
+  mcp/                 # tool registrations
 migrations/
-  001_init.sql            # schema with FTS5 triggers
-  migrations.go           # embed.FS
+  001_init.sql         # schema with FTS5 triggers
+  migrations.go        # embed.FS
 scripts/
-  fetch-model.sh          # download a whisper ggml model
-  whisper-smoke.sh        # local smoke test against whisper-server
-Dockerfile.bot            # alpine + ffmpeg, USER 10000
-Dockerfile.mcp            # distroless/static, USER nonroot
-docker-compose.yml        # 3 services, shared ./data volume
-.env.example              # all configuration documented
+  fetch-model.sh       # download a whisper ggml model
+  whisper-smoke.sh     # local smoke test against whisper-server
+Dockerfile.bot         # alpine + ffmpeg, USER 10000
+Dockerfile.mcp         # distroless/static, USER nonroot
+docker-compose.yml     # 3 services, shared ./data volume
+.env.example           # all configuration documented
 ```
 
 ## Security model
