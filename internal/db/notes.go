@@ -1,0 +1,183 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+type Status string
+
+const (
+	StatusPending   Status = "pending"
+	StatusAnalyzed  Status = "analyzed"
+	StatusDiscarded Status = "discarded"
+)
+
+type Note struct {
+	ID          int64
+	CreatedAt   time.Time
+	RawText     string
+	DurationSec sql.NullInt64
+	AudioPath   sql.NullString
+	Status      Status
+}
+
+var ErrNoteNotFound = errors.New("note not found")
+
+func (db *DB) InsertNote(ctx context.Context, rawText string, durationSec int) (int64, error) {
+	res, err := db.ExecContext(ctx,
+		`INSERT INTO notes (created_at, raw_text, duration_sec) VALUES (?, ?, ?)`,
+		time.Now().Unix(), rawText, durationSec)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (db *DB) CountPending(ctx context.Context) (int, error) {
+	var n int
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM notes WHERE status = 'pending'`).Scan(&n)
+	return n, err
+}
+
+func (db *DB) ListPending(ctx context.Context, limit int) ([]Note, error) {
+	return queryNotes(ctx, db, `
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		FROM notes
+		WHERE status = 'pending'
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`, limit)
+}
+
+func (db *DB) ListRecent(ctx context.Context, limit int) ([]Note, error) {
+	return queryNotes(ctx, db, `
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		FROM notes
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`, limit)
+}
+
+func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
+	res, err := db.ExecContext(ctx,
+		`UPDATE notes SET status = 'discarded' WHERE id = ? AND status != 'discarded'`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNoteNotFound
+	}
+	return nil
+}
+
+type NoteWithRank struct {
+	Note
+	Rank float64
+}
+
+// MaxNotesInRange caps GetNotesInRange to prevent unbounded result sets
+// (memory blow-up if an MCP client supplies an extremely wide window).
+const MaxNotesInRange = 500
+
+// GetNotesInRange returns notes whose created_at falls in [from, to). If
+// status is non-empty, results are filtered by status as well. limit ≤ 0 or
+// > MaxNotesInRange is clamped to MaxNotesInRange.
+func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status string, limit int) ([]Note, error) {
+	if limit <= 0 || limit > MaxNotesInRange {
+		limit = MaxNotesInRange
+	}
+	if status == "" {
+		return queryNotes(ctx, db, `
+			SELECT id, created_at, raw_text, duration_sec, audio_path, status
+			FROM notes
+			WHERE created_at >= ? AND created_at < ?
+			ORDER BY created_at DESC, id DESC
+			LIMIT ?`, from.Unix(), to.Unix(), limit)
+	}
+	return queryNotes(ctx, db, `
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		FROM notes
+		WHERE created_at >= ? AND created_at < ? AND status = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`, from.Unix(), to.Unix(), status, limit)
+}
+
+// SearchNotes runs an FTS5 MATCH and returns rows ordered by bm25 rank
+// (lower rank = better match). query is passed through to FTS5 as-is, so it
+// supports the full FTS5 query syntax (phrases in quotes, OR, NEAR, *).
+func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteWithRank, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, errors.New("empty query")
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status, bm25(notes_fts) AS rank
+		FROM notes_fts
+		JOIN notes n ON n.id = notes_fts.rowid
+		WHERE notes_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?`, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NoteWithRank
+	for rows.Next() {
+		var nr NoteWithRank
+		var ts int64
+		var status string
+		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status, &nr.Rank); err != nil {
+			return nil, err
+		}
+		nr.CreatedAt = time.Unix(ts, 0)
+		nr.Status = Status(status)
+		out = append(out, nr)
+	}
+	return out, rows.Err()
+}
+
+// MarkAnalyzed flips status from anything-but-discarded to 'analyzed' for the
+// given ids. Returns the number of rows actually updated.
+func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status != 'discarded' AND id IN (%s)`, placeholders)
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	res, err := db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+func queryNotes(ctx context.Context, db *DB, query string, args ...any) ([]Note, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var notes []Note
+	for rows.Next() {
+		var n Note
+		var ts int64
+		var status string
+		if err := rows.Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status); err != nil {
+			return nil, err
+		}
+		n.CreatedAt = time.Unix(ts, 0)
+		n.Status = Status(status)
+		notes = append(notes, n)
+	}
+	return notes, rows.Err()
+}

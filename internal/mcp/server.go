@@ -1,0 +1,253 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"time"
+
+	mcpsdk "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"voicelog/internal/db"
+)
+
+const (
+	serverName    = "voicelog"
+	serverVersion = "0.1.0"
+)
+
+type mcpNote struct {
+	ID           int64   `json:"id"`
+	CreatedAtISO string  `json:"created_at_iso"`
+	RawText      string  `json:"raw_text"`
+	DurationSec  int64   `json:"duration_sec"`
+	Status       string  `json:"status,omitempty"`
+	Rank         float64 `json:"rank,omitempty"`
+}
+
+func toMCP(n db.Note) mcpNote {
+	return mcpNote{
+		ID:           n.ID,
+		CreatedAtISO: n.CreatedAt.UTC().Format(time.RFC3339),
+		RawText:      n.RawText,
+		DurationSec:  n.DurationSec.Int64,
+		Status:       string(n.Status),
+	}
+}
+
+// NewServer builds the MCP server and registers all four voicelog tools.
+func NewServer(store *db.DB, logger *slog.Logger) *server.MCPServer {
+	s := server.NewMCPServer(serverName, serverVersion,
+		server.WithToolCapabilities(true),
+	)
+
+	registerListPending(s, store, logger)
+	registerGetRange(s, store, logger)
+	registerSearch(s, store, logger)
+	registerMarkAnalyzed(s, store, logger)
+
+	return s
+}
+
+func registerListPending(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("list_pending_notes",
+		mcpsdk.WithDescription("List the most recent notes with status='pending'. Newest first."),
+		mcpsdk.WithReadOnlyHintAnnotation(true),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithNumber("limit",
+			mcpsdk.Description("Maximum number of notes to return. Default 50."),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		limit := 50
+		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
+			limit = int(v)
+		}
+		notes, err := store.ListPending(ctx, limit)
+		if err != nil {
+			logger.Error("list_pending_notes", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		out := make([]mcpNote, len(notes))
+		for i, n := range notes {
+			m := toMCP(n)
+			m.Status = "" // implied by tool name
+			out[i] = m
+		}
+		return jsonResult(out)
+	})
+}
+
+func registerGetRange(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("get_notes_in_range",
+		mcpsdk.WithDescription("List notes whose created_at falls in [from, to). "+
+			"Both bounds are ISO8601 (e.g. 2026-05-26T00:00:00Z). "+
+			"Optional status filter: pending | analyzed | discarded."),
+		mcpsdk.WithReadOnlyHintAnnotation(true),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithString("from", mcpsdk.Required(),
+			mcpsdk.Description("Inclusive lower bound, ISO8601."),
+		),
+		mcpsdk.WithString("to", mcpsdk.Required(),
+			mcpsdk.Description("Exclusive upper bound, ISO8601."),
+		),
+		mcpsdk.WithString("status",
+			mcpsdk.Description("Optional status filter."),
+			mcpsdk.Enum("pending", "analyzed", "discarded"),
+		),
+		mcpsdk.WithNumber("limit",
+			mcpsdk.Description(fmt.Sprintf("Maximum notes to return. Default and hard cap %d.", db.MaxNotesInRange)),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		fromStr, err := req.RequireString("from")
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		toStr, err := req.RequireString("to")
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		from, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			return mcpsdk.NewToolResultError(fmt.Sprintf("bad 'from' (need RFC3339): %v", err)), nil
+		}
+		to, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			return mcpsdk.NewToolResultError(fmt.Sprintf("bad 'to' (need RFC3339): %v", err)), nil
+		}
+		status, _ := req.RequireString("status") // optional
+		limit := 0
+		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
+			limit = int(v)
+		}
+
+		notes, err := store.GetNotesInRange(ctx, from, to, status, limit)
+		if err != nil {
+			logger.Error("get_notes_in_range", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		out := make([]mcpNote, len(notes))
+		for i, n := range notes {
+			out[i] = toMCP(n)
+		}
+		return jsonResult(out)
+	})
+}
+
+func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("search_notes",
+		mcpsdk.WithDescription("Full-text search over note transcriptions using SQLite FTS5. "+
+			"Query supports the FTS5 syntax: bare words (AND), \"phrase\", term*, term1 OR term2. "+
+			"Results sorted by bm25 rank (lower is better)."),
+		mcpsdk.WithReadOnlyHintAnnotation(true),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithString("query", mcpsdk.Required(),
+			mcpsdk.Description("FTS5 MATCH expression."),
+		),
+		mcpsdk.WithNumber("limit",
+			mcpsdk.Description("Maximum hits to return. Default 20."),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		query, err := req.RequireString("query")
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		limit := 20
+		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
+			limit = int(v)
+		}
+		hits, err := store.SearchNotes(ctx, query, limit)
+		if err != nil {
+			logger.Error("search_notes", "query", query, "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		out := make([]mcpNote, len(hits))
+		for i, h := range hits {
+			m := toMCP(h.Note)
+			m.Rank = h.Rank
+			out[i] = m
+		}
+		return jsonResult(out)
+	})
+}
+
+func registerMarkAnalyzed(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("mark_analyzed",
+		mcpsdk.WithDescription("Set status='analyzed' for the given note ids. "+
+			"Discarded notes are not changed. Returns {updated: N}."),
+		mcpsdk.WithReadOnlyHintAnnotation(false),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithArray("ids", mcpsdk.Required(),
+			mcpsdk.Description("List of note ids."),
+			mcpsdk.Items(map[string]any{"type": "integer"}),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		raw := req.GetArguments()["ids"]
+		ids, err := toInt64Slice(raw)
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		n, err := store.MarkAnalyzed(ctx, ids)
+		if err != nil {
+			logger.Error("mark_analyzed", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(map[string]int{"updated": n})
+	})
+}
+
+func toInt64Slice(v any) ([]int64, error) {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("ids must be an array")
+	}
+	out := make([]int64, 0, len(arr))
+	for i, x := range arr {
+		switch n := x.(type) {
+		case float64:
+			out = append(out, int64(n))
+		case int:
+			out = append(out, int64(n))
+		case int64:
+			out = append(out, n)
+		case json.Number:
+			parsed, err := n.Int64()
+			if err != nil {
+				return nil, fmt.Errorf("ids[%d]: %w", i, err)
+			}
+			out = append(out, parsed)
+		default:
+			return nil, fmt.Errorf("ids[%d]: want number, got %T", i, x)
+		}
+	}
+	return out, nil
+}
+
+func jsonResult(v any) (*mcpsdk.CallToolResult, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return mcpsdk.NewToolResultError(err.Error()), nil
+	}
+	return mcpsdk.NewToolResultText(string(b)), nil
+}

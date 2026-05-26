@@ -1,0 +1,241 @@
+package db_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"voicelog/internal/db"
+)
+
+func TestInsertAndList(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id1, err := d.InsertNote(ctx, "первая заметка", 3)
+	if err != nil {
+		t.Fatalf("insert 1: %v", err)
+	}
+	id2, err := d.InsertNote(ctx, "вторая заметка", 7)
+	if err != nil {
+		t.Fatalf("insert 2: %v", err)
+	}
+
+	n, err := d.CountPending(ctx)
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 pending, got %d", n)
+	}
+
+	pending, err := d.ListPending(ctx, 50)
+	if err != nil {
+		t.Fatalf("list pending: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(pending))
+	}
+	// Newest first.
+	if pending[0].ID != id2 || pending[1].ID != id1 {
+		t.Fatalf("wrong order: got %d,%d", pending[0].ID, pending[1].ID)
+	}
+	if pending[0].Status != db.StatusPending {
+		t.Fatalf("want status pending, got %q", pending[0].Status)
+	}
+	if pending[0].DurationSec.Int64 != 7 {
+		t.Fatalf("want duration 7, got %d", pending[0].DurationSec.Int64)
+	}
+}
+
+func TestGetNotesInRange(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Three notes spread across time. Use raw SQL to control created_at.
+	for i, ts := range []int64{1700_000_000, 1700_000_100, 1700_000_200} {
+		_, err := d.ExecContext(ctx,
+			`INSERT INTO notes (created_at, raw_text) VALUES (?, ?)`,
+			ts, "note "+string(rune('A'+i)))
+		if err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	from := time.Unix(1700_000_050, 0)
+	to := time.Unix(1700_000_250, 0)
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
+	if err != nil {
+		t.Fatalf("range: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("want 2 notes in range, got %d", len(notes))
+	}
+	if notes[0].CreatedAt.Unix() != 1700_000_200 || notes[1].CreatedAt.Unix() != 1700_000_100 {
+		t.Fatalf("unexpected order: %v", notes)
+	}
+
+	// Status filter.
+	_, _ = d.ExecContext(ctx, `UPDATE notes SET status='analyzed' WHERE created_at = 1700000200`)
+	pending, err := d.GetNotesInRange(ctx, from, to, "pending", 0)
+	if err != nil {
+		t.Fatalf("range pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].CreatedAt.Unix() != 1700_000_100 {
+		t.Fatalf("status filter failed: %+v", pending)
+	}
+}
+
+func TestGetNotesInRangeRespectsCap(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Insert MaxNotesInRange+10 notes, all in the same minute.
+	base := int64(1_700_000_000)
+	for i := 0; i < db.MaxNotesInRange+10; i++ {
+		_, err := d.ExecContext(ctx,
+			`INSERT INTO notes (created_at, raw_text) VALUES (?, ?)`, base+int64(i), "x")
+		if err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	from := time.Unix(base-1, 0)
+	to := time.Unix(base+int64(db.MaxNotesInRange)+100, 0)
+
+	// limit=0 → clamp to MaxNotesInRange.
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
+	if err != nil {
+		t.Fatalf("range default: %v", err)
+	}
+	if len(notes) != db.MaxNotesInRange {
+		t.Fatalf("default limit: want %d, got %d", db.MaxNotesInRange, len(notes))
+	}
+
+	// Over-cap value also clamps.
+	notes, err = d.GetNotesInRange(ctx, from, to, "", db.MaxNotesInRange*2)
+	if err != nil {
+		t.Fatalf("range over-cap: %v", err)
+	}
+	if len(notes) != db.MaxNotesInRange {
+		t.Fatalf("over-cap: want %d, got %d", db.MaxNotesInRange, len(notes))
+	}
+
+	// Smaller explicit limit honored.
+	notes, err = d.GetNotesInRange(ctx, from, to, "", 7)
+	if err != nil {
+		t.Fatalf("range small limit: %v", err)
+	}
+	if len(notes) != 7 {
+		t.Fatalf("small limit: want 7, got %d", len(notes))
+	}
+}
+
+func TestSearchNotes(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	if _, err := d.InsertNote(ctx, "купить молоко завтра", 2); err != nil {
+		t.Fatalf("seed 1: %v", err)
+	}
+	if _, err := d.InsertNote(ctx, "идея для проекта voicelog с MCP", 5); err != nil {
+		t.Fatalf("seed 2: %v", err)
+	}
+	if _, err := d.InsertNote(ctx, "позвонить маме сегодня", 3); err != nil {
+		t.Fatalf("seed 3: %v", err)
+	}
+
+	hits, err := d.SearchNotes(ctx, "voicelog", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("want 1 hit, got %d", len(hits))
+	}
+	if !strings.Contains(hits[0].RawText, "voicelog") {
+		t.Fatalf("wrong row matched: %+v", hits[0])
+	}
+	if hits[0].Rank == 0 {
+		t.Fatalf("rank should be non-zero (bm25 returns negative-ish floats)")
+	}
+
+	_, err = d.SearchNotes(ctx, "", 10)
+	if err == nil {
+		t.Fatalf("expected error on empty query")
+	}
+}
+
+func TestMarkAnalyzed(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id1, _ := d.InsertNote(ctx, "a", 1)
+	id2, _ := d.InsertNote(ctx, "b", 1)
+	id3, _ := d.InsertNote(ctx, "c", 1)
+	// Discard one — must not be re-flipped.
+	if err := d.MarkDiscarded(ctx, id3); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+
+	n, err := d.MarkAnalyzed(ctx, []int64{id1, id2, id3, 9999})
+	if err != nil {
+		t.Fatalf("mark analyzed: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 updates (id1, id2 — id3 discarded, 9999 missing), got %d", n)
+	}
+
+	// Idempotent: re-running yields more updates only if rows actually change.
+	// Here id1 and id2 are already 'analyzed', so MarkAnalyzed will see 0 changes
+	// because SQLite's RowsAffected on UPDATE counts matched-and-changed rows only
+	// when implementation differs; modernc/sqlite counts matched rows. Either way,
+	// rerunning must not error.
+	if _, err := d.MarkAnalyzed(ctx, []int64{id1, id2}); err != nil {
+		t.Fatalf("re-mark: %v", err)
+	}
+
+	// Empty slice → 0, no error.
+	n, err = d.MarkAnalyzed(ctx, nil)
+	if err != nil || n != 0 {
+		t.Fatalf("empty ids: n=%d err=%v", n, err)
+	}
+}
+
+func TestMarkDiscarded(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, err := d.InsertNote(ctx, "to discard", 1)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := d.MarkDiscarded(ctx, id); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+
+	n, _ := d.CountPending(ctx)
+	if n != 0 {
+		t.Fatalf("expected 0 pending after discard, got %d", n)
+	}
+
+	// Idempotency: second call must report ErrNoteNotFound (already discarded).
+	err = d.MarkDiscarded(ctx, id)
+	if !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound on second discard, got %v", err)
+	}
+
+	// Non-existent id.
+	err = d.MarkDiscarded(ctx, 99999)
+	if !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound for missing id, got %v", err)
+	}
+
+	// Recent should still surface the discarded row.
+	recent, _ := d.ListRecent(ctx, 10)
+	if len(recent) != 1 || recent[0].Status != db.StatusDiscarded {
+		t.Fatalf("recent should show discarded row, got %+v", recent)
+	}
+}

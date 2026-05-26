@@ -1,0 +1,42 @@
+services:
+  whisper:
+    image: ghcr.io/ggml-org/whisper.cpp:main
+    container_name: voicelog-whisper
+    # ENTRYPOINT is ["bash","-c"], so command must be a single shell string.
+    command:
+      - "whisper-server --host 0.0.0.0 --port 8080 -m /models/ggml-small-q5_1.bin -t 4 -l auto"
+    volumes:
+      - ./models:/models:ro
+    restart: unless-stopped
+    # No published port: bot reaches whisper on the internal compose network
+    # at whisper:8080. To run scripts/whisper-smoke.sh, temporarily add:
+    #   ports:
+    #     - "127.0.0.1:8085:8080"
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: voicelog-bot
+    env_file: .env
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - whisper
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: voicelog-mcp
+    env_file: .env
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ./data:/data
+    # Bound to localhost only. Expose to the internet via a reverse proxy with
+    # TLS (see README) so Claude.ai's remote MCP connector can reach /mcp.
+    ports:
+      - "127.0.0.1:${MCP_PORT:-8081}:${MCP_PORT:-8081}"
+    restart: unless-stopped

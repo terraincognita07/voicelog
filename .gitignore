@@ -1,0 +1,21 @@
+data/
+models/
+*.db
+*.db-wal
+*.db-shm
+.env
+.DS_Store
+
+# Build artifacts
+bin/
+*.exe
+
+# Go test / coverage artifacts
+*.test
+coverage.out
+coverage.html
+
+# Local tooling state (do not commit)
+.claude/
+.vscode/
+.idea/
