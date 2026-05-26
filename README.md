@@ -10,7 +10,7 @@ Self-hosted Telegram voice journal with Claude analysis via MCP.
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)](https://github.com/terraincognita07/voicelog)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-yes-2ea44f)](https://github.com/terraincognita07/voicelog)
 
-**TL;DR.** Send voice messages to your private Telegram bot. They are
+Send voice messages to your private Telegram bot. They are
 transcribed locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 and stored in SQLite. Then in any Claude conversation, ask
 *"what was I worrying about last week?"* — Claude reads the corpus via
@@ -18,9 +18,9 @@ an MCP server you self-host.
 
 ```
     you 🎙 voice ──→ | Telegram  |
-                     |   bot     | — ffmpeg → whisper.cpp — text ─┐
-                                                                    │
-                     | INSERT                                        │
+                     |   bot     | — ffmpeg → whisper.cpp — text  ─┐
+                                                                   │
+                     | INSERT                                      │
                      └──────────→ | SQLite + FTS5    |  ←──────────┘
                                   | ./data/voicelog.db |
                                        │
