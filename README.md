@@ -9,7 +9,6 @@ Self-hosted Telegram voice journal with Claude analysis via MCP.
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)](https://github.com/terraincognita07/voicelog)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-yes-2ea44f)](https://github.com/terraincognita07/voicelog)
-[![No telemetry](https://img.shields.io/badge/Telemetry-none-2ea44f)](https://github.com/terraincognita07/voicelog#security-model)
 
 **TL;DR.** Send voice messages to your private Telegram bot. They are
 transcribed locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
