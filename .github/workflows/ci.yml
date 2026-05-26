@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: test & lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,30 +24,58 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+
       - name: go build
         env:
           CGO_ENABLED: '0'
         run: go build ./...
 
-      - name: go test
+      - name: go test (race + cover)
         env:
-          CGO_ENABLED: '0'
-        run: go test ./...
+          CGO_ENABLED: '1'
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: '1.25'
+          go-package: ./...
 
   docker:
+    name: docker build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+
       - uses: docker/setup-buildx-action@v3
+
       - name: build bot image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.bot
           push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: build mcp image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.mcp
           push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
