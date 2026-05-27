@@ -163,7 +163,9 @@ func (tb *Bot) syncMenu() {
 	}
 	if err := tb.bot.SetCommands(cmds); err != nil {
 		tb.logger.Warn("setCommands", "err", err)
+		return
 	}
+	tb.logger.Info("setCommands ok", "count", len(cmds))
 }
 
 func (tb *Bot) allowOnly() tele.MiddlewareFunc {
@@ -321,7 +323,7 @@ func (tb *Bot) renderPending(ctx context.Context, limit int) (string, *tele.Repl
 		notes = notes[:limit]
 	}
 	if len(notes) == 0 {
-		return tb.msg.EmptyList, nil, nil
+		return tb.msg.EmptyList, tb.escapeFromEmpty(), nil
 	}
 	body := tb.formatNotes(notes, false)
 	var actions []tele.InlineButton
@@ -385,6 +387,16 @@ func (tb *Bot) renderRecent(ctx context.Context, filter string, limit int) (stri
 		rows = append(rows, []tele.InlineButton{more})
 	}
 	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
+}
+
+// escapeFromEmpty builds a keyboard with a single [Show discarded] button.
+// Used when a list view becomes empty (typically after the user discards
+// everything in /pending) so they can still navigate back to restore.
+func (tb *Bot) escapeFromEmpty() *tele.ReplyMarkup {
+	b := recentFilterBtn
+	b.Text = tb.msg.GoDiscardedBtn
+	b.Data = "discarded"
+	return &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{b}}}
 }
 
 // recentFilterRow returns the [All][Pending][Discarded] chip row with the

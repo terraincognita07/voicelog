@@ -52,6 +52,7 @@ type messages struct {
 	FilterPendingBtn    string
 	FilterDiscardedBtn  string
 	FilterActiveMark    string // prefix added to the currently active chip
+	GoDiscardedBtn      string // jump to /recent with discarded filter (for empty lists)
 }
 
 var locales = map[string]messages{
@@ -147,6 +148,7 @@ var locales = map[string]messages{
 		FilterPendingBtn:   "Pending",
 		FilterDiscardedBtn: "Discarded",
 		FilterActiveMark:   "• ",
+		GoDiscardedBtn:     "🕘 Show discarded",
 	},
 	"ru": {
 		Help: "voicelog — шли голосовое или аудио.\n\n" +
@@ -240,6 +242,7 @@ var locales = map[string]messages{
 		FilterPendingBtn:   "Необработанные",
 		FilterDiscardedBtn: "Отброшенные",
 		FilterActiveMark:   "• ",
+		GoDiscardedBtn:     "🕘 Показать отброшенные",
 	},
 }
 
