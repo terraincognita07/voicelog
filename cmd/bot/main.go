@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"voicelog/internal/audio"
+	"voicelog/internal/config"
 	"voicelog/internal/db"
 	"voicelog/internal/telegram"
 	"voicelog/internal/whisper"
@@ -19,10 +20,10 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	token := mustEnv(logger, "BOT_TOKEN")
-	allowedStr := mustEnv(logger, "ALLOWED_USER_ID")
-	dbPath := mustEnv(logger, "DB_PATH")
-	whisperURL := mustEnv(logger, "WHISPER_URL")
+	token := config.MustEnv(logger, "BOT_TOKEN")
+	allowedStr := config.MustEnv(logger, "ALLOWED_USER_ID")
+	dbPath := config.MustEnv(logger, "DB_PATH")
+	whisperURL := config.MustEnv(logger, "WHISPER_URL")
 
 	allowedUser, err := strconv.ParseInt(allowedStr, 10, 64)
 	if err != nil {
@@ -53,15 +54,10 @@ func main() {
 		audioDir = "" // disables retention paths inside the bot
 	}
 
-	hallucinationThresh := 0.0 // 0 → telegram.New picks default 0.6
-	if v := os.Getenv("HALLUCINATION_THRESHOLD"); v != "" {
-		f, err := strconv.ParseFloat(v, 64)
-		if err != nil || f < 0 || f > 1 {
-			logger.Error("HALLUCINATION_THRESHOLD must be a float in [0, 1]", "value", v)
-			os.Exit(1)
-		}
-		hallucinationThresh = f
-	}
+	// 0 → telegram.New picks its own default (0.6). Pass 0 explicitly
+	// rather than hard-coding 0.6 here so the bot's default lives in
+	// one place (telegram.New).
+	hallucinationThresh := config.ParseFloat01(logger, "HALLUCINATION_THRESHOLD", 0.0)
 
 	// Disk-full guard. 0 disables the check. Default 500 MB matches the
 	// issue spec and gives generous headroom over typical DB+audio
@@ -152,11 +148,3 @@ func main() {
 	bot.Stop()
 }
 
-func mustEnv(logger *slog.Logger, key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		logger.Error("missing env var", "key", key)
-		os.Exit(1)
-	}
-	return v
-}

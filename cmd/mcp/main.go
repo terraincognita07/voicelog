@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"voicelog/internal/config"
 	"voicelog/internal/db"
 	"voicelog/internal/mcp"
 	"voicelog/internal/whisper"
@@ -25,8 +25,8 @@ const minTokenLen = 16
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	dbPath := mustEnv(logger, "DB_PATH")
-	token := mustEnv(logger, "MCP_TOKEN")
+	dbPath := config.MustEnv(logger, "DB_PATH")
+	token := config.MustEnv(logger, "MCP_TOKEN")
 	if len(token) < minTokenLen {
 		logger.Error("MCP_TOKEN too short", "len", len(token), "min", minTokenLen)
 		os.Exit(1)
@@ -59,15 +59,7 @@ func main() {
 	if whisperURL := os.Getenv("WHISPER_URL"); whisperURL != "" {
 		deps.Whisper = whisper.New(whisperURL)
 		deps.BasePrompt = os.Getenv("WHISPER_PROMPT")
-		deps.HallucinationThresh = 0.6 // matches the bot's default
-		if v := os.Getenv("HALLUCINATION_THRESHOLD"); v != "" {
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f < 0 || f > 1 {
-				logger.Error("HALLUCINATION_THRESHOLD must be a float in [0, 1]", "value", v)
-				os.Exit(1)
-			}
-			deps.HallucinationThresh = f
-		}
+		deps.HallucinationThresh = config.ParseFloat01(logger, "HALLUCINATION_THRESHOLD", 0.6)
 		// audio_path is stored relative to AUDIO_DIR for new notes.
 		// Same default as cmd/bot so the two containers agree out of
 		// the box; operators who change AUDIO_DIR must set it in both.
@@ -143,11 +135,3 @@ func bearerAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-func mustEnv(logger *slog.Logger, key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		logger.Error("missing env var", "key", key)
-		os.Exit(1)
-	}
-	return v
-}

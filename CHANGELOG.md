@@ -26,6 +26,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   two minor behavior differences (bot now `TrimSpace`s the basePrompt;
   MCP now Warn-logs `VocabPrompt` errors). `VocabSource` is a minimal
   interface — `*db.DB` satisfies it implicitly.
+- **`mustEnv` + `HALLUCINATION_THRESHOLD` parsing extracted to
+  `internal/config`.** `cmd/bot` and `cmd/mcp` no longer carry
+  identical copies of `mustEnv` or the float-in-[0,1] env parser.
+  `config.ParseFloat01` keeps the existing per-binary defaults intact
+  (bot still passes `0.0` as the "let telegram.New pick" signal, mcp
+  still uses `0.6` directly).
 
 ### Fixed
 
