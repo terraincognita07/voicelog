@@ -23,9 +23,12 @@ type Bot struct {
 	whisper     *whisper.Client
 	allowedUser int64
 	logger      *slog.Logger
+	msg         messages
 }
 
-func New(token string, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
+// New creates a Bot. locale is "en" or "ru" (or any other key in the
+// locales map). An empty or unknown locale falls back to "en".
+func New(token, locale string, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -39,6 +42,7 @@ func New(token string, allowedUser int64, store *db.DB, w *whisper.Client, logge
 		whisper:     w,
 		allowedUser: allowedUser,
 		logger:      logger,
+		msg:         pickLocale(locale),
 	}
 	tb.registerHandlers()
 	return tb, nil
@@ -76,10 +80,7 @@ func (tb *Bot) allowOnly() tele.MiddlewareFunc {
 }
 
 func (tb *Bot) cmdHelp(c tele.Context) error {
-	return c.Send("voicelog — шли голосовое или аудио.\n\n" +
-		"/pending — последние 20 необработанных\n" +
-		"/recent — последние 10 (любой статус)\n" +
-		"/delete <id> — пометить как discarded")
+	return c.Send(tb.msg.Help)
 }
 
 func (tb *Bot) onVoice(c tele.Context) error {
@@ -114,7 +115,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return c.Send("⚠ пустая транскрипция")
+		return c.Send(tb.msg.EmptyTrans)
 	}
 
 	id, err := tb.db.InsertNote(ctx, text, duration)
@@ -123,12 +124,12 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 
 	pending, _ := tb.db.CountPending(ctx)
-	return c.Send(fmt.Sprintf("✓ записано #%d (%d pending)", id, pending))
+	return c.Send(tb.msg.Recorded(id, pending))
 }
 
 func (tb *Bot) errReply(c tele.Context, label string, err error) error {
 	tb.logger.Error(label, "err", err)
-	return c.Send(fmt.Sprintf("⚠ %s: %v", label, err))
+	return c.Send(tb.msg.Error(label, err))
 }
 
 func (tb *Bot) cmdPending(c tele.Context) error {
@@ -138,7 +139,7 @@ func (tb *Bot) cmdPending(c tele.Context) error {
 	if err != nil {
 		return tb.errReply(c, "list pending", err)
 	}
-	return c.Send(formatNotes(notes, false))
+	return c.Send(tb.formatNotes(notes, false))
 }
 
 func (tb *Bot) cmdRecent(c tele.Context) error {
@@ -148,32 +149,32 @@ func (tb *Bot) cmdRecent(c tele.Context) error {
 	if err != nil {
 		return tb.errReply(c, "list recent", err)
 	}
-	return c.Send(formatNotes(notes, true))
+	return c.Send(tb.formatNotes(notes, true))
 }
 
 func (tb *Bot) cmdDelete(c tele.Context) error {
 	args := strings.Fields(c.Message().Payload)
 	if len(args) != 1 {
-		return c.Send("использование: /delete <id>")
+		return c.Send(tb.msg.UsageDelete)
 	}
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		return c.Send("id должен быть числом")
+		return c.Send(tb.msg.BadID)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := tb.db.MarkDiscarded(ctx, id); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
-			return c.Send(fmt.Sprintf("не найдено #%d (или уже discarded)", id))
+			return c.Send(tb.msg.NotFound(id))
 		}
 		return tb.errReply(c, "mark discarded", err)
 	}
-	return c.Send(fmt.Sprintf("✓ #%d → discarded", id))
+	return c.Send(tb.msg.Discarded(id))
 }
 
-func formatNotes(notes []db.Note, withStatus bool) string {
+func (tb *Bot) formatNotes(notes []db.Note, withStatus bool) string {
 	if len(notes) == 0 {
-		return "пусто"
+		return tb.msg.EmptyList
 	}
 	var b strings.Builder
 	for _, n := range notes {

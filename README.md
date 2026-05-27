@@ -391,6 +391,7 @@ For personal self-host these are usually acceptable. To mitigate:
 | `MCP_TOKEN` | yes | — | Bearer token for the MCP server. Min 16 chars. Use `openssl rand -hex 32`. |
 | `MCP_PORT` | no | `8081` | Port the mcp container listens on inside the host |
 | `TZ` | no | UTC | Timezone for log timestamps and bot replies |
+| `BOT_LOCALE` | no | `en` | Bot reply language: `en` or `ru`. Commands are unchanged in any locale. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
 

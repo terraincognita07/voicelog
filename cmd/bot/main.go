@@ -28,6 +28,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	locale := os.Getenv("BOT_LOCALE") // empty falls back to "en" inside telegram.New
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -45,7 +47,7 @@ func main() {
 
 	w := whisper.New(whisperURL)
 
-	bot, err := telegram.New(token, allowedUser, store, w, logger)
+	bot, err := telegram.New(token, locale, allowedUser, store, w, logger)
 	if err != nil {
 		logger.Error("init bot", "err", err)
 		os.Exit(1)
@@ -55,7 +57,8 @@ func main() {
 	logger.Info("voicelog bot started",
 		"allowed_user", allowedUser,
 		"db", dbPath,
-		"whisper_url", whisperURL)
+		"whisper_url", whisperURL,
+		"locale", locale)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
