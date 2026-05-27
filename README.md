@@ -540,6 +540,52 @@ docker-compose.yml     # 3 services, shared ./data volume
 - **No telemetry.** Nothing leaves your server except (a) Telegram API traffic
   and (b) MCP responses to Claude.ai when you trigger them.
 - **CGO disabled.** Pure-Go SQLite via `modernc.org/sqlite`. No native deps.
+- **Sanitized errors.** The bot never sends raw `err.Error()` to chat — that
+  used to leak internal hostnames (`whisper`), filesystem paths
+  (`/data/voicelog.db`), and third-party HTTP body content. Users see e.g.
+  `⚠ Speech recognition unavailable. Try again in a moment.`; the full err
+  stays in `slog`.
+- **Throttled rejection logs.** Anonymous users get a single Warn line per
+  user-id per 15 minutes (not per-message) — protects the log from
+  someone spamming the bot to fill disk.
+- **Defensive callback parsing.** Every inline-button `Data` field is
+  parsed through whitelist validators (status enum, date format, integer
+  range). Crafted callback data cannot smuggle arbitrary strings into
+  view state.
+
+### What's NOT protected — read this if you self-host
+
+voicelog ships secured for "single-user self-hosted, personal-use". It is
+**not** ready for shared / multi-tenant / regulated-health-data
+deployment. Specifically:
+
+- **No MCP rate-limit.** A leaked `MCP_TOKEN` gives full read+mutate access
+  with no per-IP / per-second throttle. Rotate aggressively if you screen-
+  share, paste it into a chat, or commit a config snippet by accident.
+- **No audit log.** `get_note`, `search_notes`, `discard_notes` etc. don't
+  record who accessed what. If you need "who read note #42 in the last
+  30 days?" — there's no answer to give. Fine for personal use, not for
+  compliance.
+- **Audio in tmp.** During transcription each clip lives ~10 seconds at
+  `/tmp/voicelog-*/src.wav`. A co-tenant with shell access to the container
+  could read it. No encryption-at-rest. (Audio is otherwise not persisted
+  — see roadmap for opt-in retention.)
+- **Whisper prompt is user-controlled.** `/vocab add` lets you write any
+  string into the prompt sent to whisper.cpp. whisper.cpp is a transcription
+  model, not an instruction-follower, so prompt-injection has no real
+  blast radius today. If you swap whisper for an instruction-tuned ASR,
+  reassess.
+- **No public-API hardening on the MCP host.** The bearer-only model assumes
+  the MCP endpoint sits behind your reverse proxy with TLS and ideally
+  IP-allowlisted. If you publish `/t/<token>/mcp` to the open internet
+  without a WAF, token brute-force is bounded only by Telegram-MCP request
+  rate, not anything voicelog does.
+- **TZ-dependent grouping.** Day grouping (`📅 today`/`yesterday`/dates)
+  uses the bot container's `$TZ`. If you change `$TZ` mid-day, "today"
+  shifts. Not a security issue — surfaces a UX subtlety worth knowing.
+- **Bot token in env var.** Standard practice; readable by any process
+  inside the bot container or anyone with `docker compose config`. If you
+  need stronger isolation, use Docker secrets.
 
 ## Operational notes
 

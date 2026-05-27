@@ -27,7 +27,8 @@ func formatDuration(sec int) string {
 // startup via the BOT_LOCALE env var. Add a new locale by appending an
 // entry to locales below — tests guarantee every locale has every field.
 type messages struct {
-	Help           string
+	Welcome        string // shown on /start — short greeting + first-step hint
+	Help           string // shown on /help — full guide
 	Recorded       func(id int64, durSec int, pending int, preview string) string
 	EmptyTrans     string
 	EmptyList      string
@@ -42,6 +43,7 @@ type messages struct {
 	ErrFallback    string
 	DiscardBtn     string
 	RestoreBtn     string
+	ShowFullBtn    string // [📖 Show full] when preview was truncated
 	DiscardedReply func(id int64, preview string) string
 	RestoredReply  func(id int64, preview string) string
 	Status         func(s string) string // localize "pending"/"analyzed"/"discarded"
@@ -63,7 +65,9 @@ type messages struct {
 	VocabClearBtn  string
 	VocabYesBtn    string
 	VocabNoBtn     string
-	VocabAddPrompt string
+	VocabAddPrompt     string
+	VocabSkippedSuffix func(n int) string // " (skipped N too long)" — empty when n=0
+	VocabClearFallback string             // text-mode hint when user typed "/vocab clear" without confirm
 
 	ShowMoreBtn         string
 	FilterAllBtn        string
@@ -86,6 +90,11 @@ type messages struct {
 
 var locales = map[string]messages{
 	"en": {
+		Welcome: "👋 Welcome to voicelog — your self-hosted voice journal.\n\n" +
+			"Record a voice message right now and I'll transcribe it. The buttons " +
+			"at the bottom of the chat (📋 Pending / 🕘 Recent / 📒 Vocab / ❓ Help) " +
+			"give you one-tap access to everything else.\n\n" +
+			"Tap ❓ Help for the full guide.",
 		Help: "voicelog · self-hosted voice journal\n\n" +
 			"How to use:\n" +
 			"1. Record a voice message — it's transcribed and saved as a note.\n" +
@@ -161,8 +170,9 @@ var locales = map[string]messages{
 			return s
 		},
 		Transcribing: "🎙 transcribing…",
-		DiscardBtn: "🗑 Discard",
-		RestoreBtn: "↩ Restore",
+		DiscardBtn:  "🗑 Discard",
+		RestoreBtn:  "↩ Restore",
+		ShowFullBtn: "📖 Show full",
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Note #%d discarded.", id)
 			if preview == "" {
@@ -231,6 +241,13 @@ var locales = map[string]messages{
 		VocabYesBtn:    "✓ Yes, wipe",
 		VocabNoBtn:     "✗ Cancel",
 		VocabAddPrompt: "Send terms separated by spaces (reply to this message).",
+		VocabSkippedSuffix: func(n int) string {
+			if n == 0 {
+				return ""
+			}
+			return fmt.Sprintf(" (skipped %d too long, limit %d chars)", n, MaxVocabTermLen)
+		},
+		VocabClearFallback: "Text fallback: /vocab clear confirm",
 
 		ShowMoreBtn:        "⤵ Show more",
 		FilterAllBtn:       "All",
@@ -253,6 +270,11 @@ var locales = map[string]messages{
 		DayLabel:     func(t time.Time) string { return t.Format("Mon, Jan 2") },
 	},
 	"ru": {
+		Welcome: "👋 Привет! Это voicelog — твой персональный голосовой журнал.\n\n" +
+			"Запиши голосовое прямо сейчас — я расшифрую его. Кнопки внизу чата " +
+			"(📋 Необработанные / 🕘 Последние / 📒 Словарь / ❓ Помощь) — " +
+			"быстрый доступ ко всему остальному.\n\n" +
+			"Тапни ❓ Помощь для полного гида.",
 		Help: "voicelog · персональный голосовой журнал\n\n" +
 			"Как пользоваться:\n" +
 			"1. Запиши голосовое — оно расшифруется и сохранится как заметка.\n" +
@@ -328,8 +350,9 @@ var locales = map[string]messages{
 			return s
 		},
 		Transcribing: "🎙 распознаю…",
-		DiscardBtn: "🗑 Отбросить",
-		RestoreBtn: "↩ Вернуть",
+		DiscardBtn:  "🗑 Отбросить",
+		RestoreBtn:  "↩ Вернуть",
+		ShowFullBtn: "📖 Показать полностью",
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
 			if preview == "" {
@@ -398,6 +421,13 @@ var locales = map[string]messages{
 		VocabYesBtn:    "✓ Да, очистить",
 		VocabNoBtn:     "✗ Отмена",
 		VocabAddPrompt: "Пришли термины через пробел (ответом на это сообщение).",
+		VocabSkippedSuffix: func(n int) string {
+			if n == 0 {
+				return ""
+			}
+			return fmt.Sprintf(" (пропущено %d длиннее %d символов)", n, MaxVocabTermLen)
+		},
+		VocabClearFallback: "Текстовый fallback: /vocab clear confirm",
 
 		ShowMoreBtn:        "⤵ Показать ещё",
 		FilterAllBtn:       "Все",

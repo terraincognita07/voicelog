@@ -12,6 +12,9 @@ func TestLocalesAreComplete(t *testing.T) {
 		t.Run(code, func(t *testing.T) {
 			// Plain strings.
 			for label, got := range map[string]string{
+				"Welcome":            m.Welcome,
+				"ShowFullBtn":        m.ShowFullBtn,
+				"VocabClearFallback": m.VocabClearFallback,
 				"Help":               m.Help,
 				"EmptyTrans":         m.EmptyTrans,
 				"EmptyList":          m.EmptyList,
@@ -110,6 +113,16 @@ func TestLocalesAreComplete(t *testing.T) {
 			}
 			if m.DayLabel == nil || m.DayLabel(time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)) == "" {
 				t.Error("DayLabel missing or returns empty")
+			}
+			if m.VocabSkippedSuffix == nil {
+				t.Error("VocabSkippedSuffix is nil")
+			} else {
+				if got := m.VocabSkippedSuffix(0); got != "" {
+					t.Errorf("VocabSkippedSuffix(0) must be empty, got %q", got)
+				}
+				if m.VocabSkippedSuffix(3) == "" {
+					t.Errorf("VocabSkippedSuffix(3) must be non-empty")
+				}
 			}
 
 			// Commands list.

@@ -46,10 +46,26 @@ jobs:
           files: coverage.out
           fail_ci_if_error: false
 
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      # Pinned version so a fresh vuln tool can't silently change behavior.
+      # Bump intentionally when you want new checks.
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+
+      # Exits non-zero (3) on any reachable vulnerability — this gates the
+      # job. Failing here blocks the PR.
+      - name: govulncheck ./...
+        run: govulncheck ./...
 
   docker:
     name: docker build
