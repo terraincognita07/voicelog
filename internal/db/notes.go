@@ -29,14 +29,16 @@ type Note struct {
 	SuspectHallucination bool
 }
 
-// NoteMeta carries optional transcription-quality signals computed from
-// whisper's verbose_json response. All three are pointers so the caller
-// can explicitly omit them (= store NULL) for the "old whisper" or
-// "no segments" case — distinct from a real 0.0 confidence.
+// NoteMeta carries optional signals computed at insert time. Confidence
+// fields are pointers so the caller can explicitly omit them (= store
+// NULL) for the "old whisper" or "no segments" case — distinct from a
+// real 0.0 confidence. AudioHash is "" when the caller doesn't want to
+// store one (e.g. tests, retranscribe).
 type NoteMeta struct {
 	ConfidenceOverall    *float64
 	ConfidenceMin        *float64
 	SuspectHallucination bool
+	AudioHash            string
 }
 
 var ErrNoteNotFound = errors.New("note not found")
@@ -50,13 +52,17 @@ func (db *DB) InsertNote(ctx context.Context, rawText string, durationSec int) (
 
 // InsertNoteWithMeta inserts a note alongside its quality signals.
 // Nil pointer fields are stored as NULL — distinct from a real 0.0.
+// Empty AudioHash stores NULL.
 func (db *DB) InsertNoteWithMeta(ctx context.Context, rawText string, durationSec int, meta NoteMeta) (int64, error) {
-	var overall, worst any
+	var overall, worst, hash any
 	if meta.ConfidenceOverall != nil {
 		overall = *meta.ConfidenceOverall
 	}
 	if meta.ConfidenceMin != nil {
 		worst = *meta.ConfidenceMin
+	}
+	if meta.AudioHash != "" {
+		hash = meta.AudioHash
 	}
 	suspect := 0
 	if meta.SuspectHallucination {
@@ -64,13 +70,49 @@ func (db *DB) InsertNoteWithMeta(ctx context.Context, rawText string, durationSe
 	}
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO notes (created_at, raw_text, duration_sec,
-		                   confidence_overall, confidence_min, suspect_hallucination)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), rawText, durationSec, overall, worst, suspect)
+		                   confidence_overall, confidence_min, suspect_hallucination,
+		                   audio_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), rawText, durationSec, overall, worst, suspect, hash)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// DupNote describes an existing note that matches a recent audio hash —
+// returned by FindRecentByHash so the caller can quote "duplicate of #N
+// from X seconds ago" in the user reply.
+type DupNote struct {
+	ID        int64
+	CreatedAt time.Time
+}
+
+// FindRecentByHash looks for a note with the given audio_hash created
+// within `window` of now. Returns ErrNoteNotFound when nothing matches —
+// distinct from a real DB error so the caller can treat "no dup" as a
+// happy path.
+func (db *DB) FindRecentByHash(ctx context.Context, hash string, window time.Duration) (DupNote, error) {
+	if hash == "" {
+		return DupNote{}, ErrNoteNotFound
+	}
+	cutoff := time.Now().Add(-window).Unix()
+	var (
+		id int64
+		ts int64
+	)
+	err := db.QueryRowContext(ctx, `
+		SELECT id, created_at FROM notes
+		WHERE audio_hash = ? AND created_at >= ?
+		ORDER BY created_at DESC
+		LIMIT 1`, hash, cutoff).Scan(&id, &ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DupNote{}, ErrNoteNotFound
+	}
+	if err != nil {
+		return DupNote{}, err
+	}
+	return DupNote{ID: id, CreatedAt: time.Unix(ts, 0)}, nil
 }
 
 func (db *DB) CountPending(ctx context.Context) (int, error) {
@@ -356,6 +398,40 @@ func (db *DB) AudiosOlderThan(ctx context.Context, cutoff time.Time) ([]AudioRef
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// HealthReport summarizes the result of a quick DB integrity check.
+type HealthReport struct {
+	IntegrityCheck string `json:"integrity_check"`
+	QuickCheck     string `json:"quick_check"`
+	NoteCount      int64  `json:"note_count"`
+	DBSizeBytes    int64  `json:"db_size_bytes"`
+}
+
+// Health runs SQLite's PRAGMA integrity_check and quick_check plus a
+// note count and db size. integrity_check/quick_check return the
+// literal string "ok" on a healthy DB; anything else is the first
+// error message.
+func (db *DB) Health(ctx context.Context) (HealthReport, error) {
+	var rep HealthReport
+	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&rep.IntegrityCheck); err != nil {
+		return rep, fmt.Errorf("integrity_check: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&rep.QuickCheck); err != nil {
+		return rep, fmt.Errorf("quick_check: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM notes`).Scan(&rep.NoteCount); err != nil {
+		return rep, fmt.Errorf("note_count: %w", err)
+	}
+	var pageCount, pageSize int64
+	if err := db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return rep, fmt.Errorf("page_count: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return rep, fmt.Errorf("page_size: %w", err)
+	}
+	rep.DBSizeBytes = pageCount * pageSize
+	return rep, nil
 }
 
 // ArchiveAndUpdateText replaces a note's raw_text + confidence metadata

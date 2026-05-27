@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -62,6 +63,23 @@ func main() {
 		hallucinationThresh = f
 	}
 
+	// Disk-full guard. 0 disables the check. Default 500 MB matches the
+	// issue spec and gives generous headroom over typical DB+audio
+	// growth for a personal journal.
+	minFreeDiskMB := uint64(500)
+	if v := os.Getenv("MIN_FREE_DISK_MB"); v != "" {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			logger.Error("MIN_FREE_DISK_MB must be a non-negative integer", "value", v)
+			os.Exit(1)
+		}
+		minFreeDiskMB = n
+	}
+	// DataDir = parent of DB file. The bot writes its DB AND its
+	// retained-audio dir into the same /data mount, so monitoring the
+	// db parent is sufficient.
+	dataDir := filepath.Dir(dbPath)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -84,6 +102,8 @@ func main() {
 		BasePrompt:          basePrompt,
 		AudioDir:            audioDir,
 		HallucinationThresh: hallucinationThresh,
+		DataDir:             dataDir,
+		MinFreeDiskMB:       minFreeDiskMB,
 	}, allowedUser, store, w, logger)
 	if err != nil {
 		logger.Error("init bot", "err", err)
@@ -106,7 +126,8 @@ func main() {
 		"locale", locale,
 		"base_prompt_len", len(basePrompt),
 		"audio_retention_days", audioRetentionDays,
-		"audio_dir", audioDir)
+		"audio_dir", audioDir,
+		"min_free_disk_mb", minFreeDiskMB)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

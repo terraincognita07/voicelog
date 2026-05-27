@@ -33,6 +33,7 @@ an MCP server you self-host.
                                        │   discard_notes
                                        │   restore_note
                                        │   retranscribe
+                                       │   db_health
                                        ▼
     Claude.ai ← MCP over HTTPS ── nginx ── | voicelog-mcp  |
 ```
@@ -400,6 +401,8 @@ For personal self-host these are usually acceptable. To mitigate:
 | `AUDIO_RETENTION_DAYS` | no | `0` | If `> 0`, keep the original `.oga` voice file at `AUDIO_DIR/<note_id>.oga` for that many days. A background janitor sweeps every 6h. `0` (default) disables retention — audio is deleted right after transcription. |
 | `AUDIO_DIR` | no | `/data/audio` | Where retained `.oga` files live. Only consulted when `AUDIO_RETENTION_DAYS > 0`. |
 | `HALLUCINATION_THRESHOLD` | no | `0.6` | Whisper hallucination detector cutoff (float ∈ [0, 1]). First segment's `no_speech_prob` above this flags the note as suspect. Raise to be stricter, lower to be looser. |
+| `MIN_FREE_DISK_MB` | no | `500` | Bot refuses new captures when free space on the data filesystem drops below this. `0` disables the guard. |
+| `DB_MAINTENANCE_DISABLED` | no | — | When set to any non-empty value, the mcp container skips its weekly WAL checkpoint + monthly VACUUM loop. Use only if you run maintenance externally. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
 
@@ -439,6 +442,11 @@ on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
   flip a single discarded note back to `pending`. Returns
   `{restored: bool}` — `true` if it was discarded and got restored,
   `false` if it exists but was not in `discarded` state.
+- **`db_health()`** —
+  runs SQLite `PRAGMA integrity_check` + `quick_check`, then reports
+  `note_count` and `db_size_bytes`. Healthy DB: both checks return the
+  literal `"ok"`. Cheap on the typical voicelog DB — safe to invoke
+  ad-hoc (e.g. weekly: "how's my DB?").
 - **`retranscribe(id: int)`** —
   re-run whisper on the note's retained audio file (requires
   `AUDIO_RETENTION_DAYS > 0` on the bot side, AND the note's audio still

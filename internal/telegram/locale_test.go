@@ -121,6 +121,12 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.DayLabel == nil || m.DayLabel(time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)) == "" {
 				t.Error("DayLabel missing or returns empty")
 			}
+			if m.Duplicate == nil || m.Duplicate(7, 4) == "" {
+				t.Error("Duplicate missing or returns empty")
+			}
+			if m.DiskFull == nil || m.DiskFull(40, 500) == "" {
+				t.Error("DiskFull missing or returns empty")
+			}
 			if m.VocabSkippedSuffix == nil {
 				t.Error("VocabSkippedSuffix is nil")
 			} else {

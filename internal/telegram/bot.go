@@ -2,8 +2,11 @@ package telegram
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,8 +19,16 @@ import (
 
 	"voicelog/internal/audio"
 	"voicelog/internal/db"
+	"voicelog/internal/diskguard"
 	"voicelog/internal/whisper"
 )
+
+// dedupWindow is how recent a note must be (by created_at) to be
+// considered the same audio as a freshly arriving voice message. 5
+// minutes is long enough to catch double-taps on slow mobile networks
+// while staying short enough that intentional re-sends of the same
+// recorded clip later in the day go through normally.
+const dedupWindow = 5 * time.Minute
 
 type Bot struct {
 	bot                  *tele.Bot
@@ -30,6 +41,8 @@ type Bot struct {
 	audioDir             string  // persistent audio storage; "" = retention disabled
 	audioRetainOn        bool    // memoizes audioDir != "" for processFile
 	hallucinationThresh  float64 // no_speech_prob > thresh → suspect; default 0.6
+	dataDir              string  // filesystem to check for free space
+	minFreeDiskBytes     uint64  // disk-full threshold; 0 disables the guard
 
 	mainMenu       *tele.ReplyMarkup
 	btnMenuPending *tele.Btn
@@ -50,12 +63,15 @@ const rejectLogWindow = 15 * time.Minute
 
 // Config bundles the optional knobs that don't fit cleanly into the
 // positional New() signature. Zero value = defaults (no audio retention,
-// no base whisper prompt, en locale, default hallucination threshold).
+// no base whisper prompt, en locale, default hallucination threshold,
+// no disk-full guard).
 type Config struct {
 	Locale              string  // "en" / "ru" / fallback "en"
 	BasePrompt          string  // WHISPER_PROMPT env
 	AudioDir            string  // "" disables audio retention
 	HallucinationThresh float64 // no_speech_prob threshold; 0 → default 0.6
+	DataDir             string  // filesystem location of the DB / audio dir; used by the disk-full guard
+	MinFreeDiskMB       uint64  // refuse new captures when free space drops below this; 0 disables
 }
 
 // defaultHallucinationThresh is whisper.cpp's conventional cutoff for
@@ -92,6 +108,8 @@ func New(token string, cfg Config, allowedUser int64, store *db.DB, w *whisper.C
 		audioDir:            strings.TrimSpace(cfg.AudioDir),
 		audioRetainOn:       strings.TrimSpace(cfg.AudioDir) != "",
 		hallucinationThresh: thresh,
+		dataDir:             strings.TrimSpace(cfg.DataDir),
+		minFreeDiskBytes:    cfg.MinFreeDiskMB * 1024 * 1024,
 		rejectLog:           make(map[int64]time.Time),
 	}
 	tb.buildMenu()
@@ -232,6 +250,21 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	// Disk-full guard: bail out BEFORE downloading 200 KB and burning a
+	// whisper pass on something that won't fit. Skipped when minFreeDiskBytes
+	// is 0 (env unset) or dataDir is empty.
+	if tb.minFreeDiskBytes > 0 && tb.dataDir != "" {
+		if free, err := diskguard.FreeBytes(tb.dataDir); err != nil {
+			tb.logger.Warn("disk guard: statfs", "dir", tb.dataDir, "err", err)
+		} else if free < tb.minFreeDiskBytes {
+			tb.logger.Warn("disk almost full — capture refused",
+				"free_mb", free/1024/1024,
+				"min_mb", tb.minFreeDiskBytes/1024/1024,
+			)
+			return c.Send(tb.msg.DiskFull(free/1024/1024, tb.minFreeDiskBytes/1024/1024))
+		}
+	}
+
 	// Send "typing" so the user sees the bot is alive while whisper runs.
 	// Telebot refreshes the indicator every ~5s; one shot is enough for
 	// short clips, and a fresh shot will be sent if we send a new message.
@@ -248,6 +281,30 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 		return tb.errReply(c, "download from telegram", err)
 	}
 
+	// Dedup: SHA-256 the downloaded bytes BEFORE we burn ffmpeg+whisper
+	// cycles on what may be a double-tap. A miss here just costs an
+	// open+read+hash; a hit saves the whole pipeline.
+	audioHash, err := hashFile(srcPath)
+	if err != nil {
+		// Hashing should be infallible at this point (file exists, we
+		// just wrote it). Log and continue — dedup is a nice-to-have,
+		// not a gate on saving.
+		tb.logger.Warn("dedup hash", "err", err)
+	} else if audioHash != "" {
+		dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		dup, derr := tb.db.FindRecentByHash(dbCtx, audioHash, dedupWindow)
+		cancel()
+		if derr == nil {
+			tb.logger.Info("dedup hit", "existing_id", dup.ID, "age_sec", int(time.Since(dup.CreatedAt).Seconds()))
+			return c.Send(tb.msg.Duplicate(dup.ID, int(time.Since(dup.CreatedAt).Seconds())))
+		}
+		// Any error other than ErrNoteNotFound is treated as "no dup":
+		// transient DB hiccup must not block the user's recording.
+		if !errors.Is(derr, db.ErrNoteNotFound) {
+			tb.logger.Warn("dedup lookup", "err", derr)
+		}
+	}
+
 	prompt := tb.composePrompt(ctx)
 	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration, "prompt_len", len(prompt))
 	_ = c.Notify(tele.Typing) // refresh the indicator before the long call
@@ -261,7 +318,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 
 	// Derive quality signals. Missing segments → store NULL.
-	meta := db.NoteMeta{}
+	meta := db.NoteMeta{AudioHash: audioHash}
 	overall, worst, suspect, ok := result.Aggregate(tb.hallucinationThresh)
 	if ok {
 		meta.ConfidenceOverall = &overall
@@ -290,6 +347,23 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	preview := previewText(text, savedPreviewLen)
 	truncated := len([]rune(strings.ReplaceAll(text, "\n", " "))) > savedPreviewLen
 	return c.Send(tb.msg.Recorded(id, duration, pending, preview, meta.SuspectHallucination), tb.discardMarkup(id, truncated))
+}
+
+// hashFile streams the file at path through SHA-256 and returns the hex
+// digest. Used for dedup of double-tap voice messages: identical bytes
+// → identical hash → looked up in the recent-notes window before
+// transcription.
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // previewText returns a single-line, run-length-capped preview suitable

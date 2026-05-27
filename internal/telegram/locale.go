@@ -31,6 +31,8 @@ type messages struct {
 	Help           string // shown on /help — full guide
 	Recorded       func(id int64, durSec int, pending int, preview string, suspect bool) string
 	SuspectWarn    string // appended to saved-reply when first segment looks like silence
+	Duplicate      func(existingID int64, ageSec int) string // "duplicate of #N sent X sec ago"
+	DiskFull       func(freeMB, minMB uint64) string         // capture refused — low disk
 	EmptyTrans     string
 	EmptyList      string
 	EmptyPending   string // friendlier "(empty)" for /pending
@@ -123,6 +125,12 @@ var locales = map[string]messages{
 			return out
 		},
 		SuspectWarn: "⚠ Looks like silence or non-speech — the transcription may be hallucinated. Review or 🗑.",
+		Duplicate: func(id int64, ageSec int) string {
+			return fmt.Sprintf("🪞 Looks like a duplicate of note #%d (sent %d seconds ago). Skipped.", id, ageSec)
+		},
+		DiskFull: func(freeMB, minMB uint64) string {
+			return fmt.Sprintf("⚠ Disk almost full (%d MB free, need at least %d MB). Capture refused — free up space on the bot host and try again.", freeMB, minMB)
+		},
 		EmptyTrans:   "⚠ Transcription came back empty — too quiet, too short, or non-speech audio.",
 		EmptyList:    "Nothing here yet.",
 		EmptyPending: "No pending notes. Record a voice message and it'll appear here.",
@@ -308,6 +316,12 @@ var locales = map[string]messages{
 			return out
 		},
 		SuspectWarn: "⚠ Похоже на тишину или не речь — транскрипция может быть выдуманной. Проверь или 🗑.",
+		Duplicate: func(id int64, ageSec int) string {
+			return fmt.Sprintf("🪞 Похоже на дубль заметки #%d (отправлена %d сек назад). Пропускаю.", id, ageSec)
+		},
+		DiskFull: func(freeMB, minMB uint64) string {
+			return fmt.Sprintf("⚠ Почти кончилось место (свободно %d MB, нужно минимум %d MB). Запись отклонена — освободи место на сервере и попробуй снова.", freeMB, minMB)
+		},
 		EmptyTrans:   "⚠ Транскрипция пустая — слишком тихо, коротко или не речь.",
 		EmptyList:    "Пока ничего нет.",
 		EmptyPending: "Очередь пуста. Запиши голосовое — заметка появится здесь.",

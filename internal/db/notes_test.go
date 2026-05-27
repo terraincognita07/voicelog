@@ -505,6 +505,85 @@ func TestArchiveAndUpdateText_FTSReflectsNewText(t *testing.T) {
 	}
 }
 
+func TestInsertNoteWithMeta_AudioHash(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, err := d.InsertNoteWithMeta(ctx, "hashed", 3, db.NoteMeta{AudioHash: "deadbeef"})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	dup, err := d.FindRecentByHash(ctx, "deadbeef", time.Minute)
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if dup.ID != id {
+		t.Errorf("dup id: want %d, got %d", id, dup.ID)
+	}
+
+	// Different hash → not found.
+	if _, err := d.FindRecentByHash(ctx, "feedface", time.Minute); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Errorf("want ErrNoteNotFound for missing hash, got %v", err)
+	}
+
+	// Empty hash → not found (defensive — never match the "no hash" notes).
+	if _, err := d.FindRecentByHash(ctx, "", time.Minute); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Errorf("want ErrNoteNotFound for empty hash, got %v", err)
+	}
+}
+
+func TestFindRecentByHash_WindowExpiry(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Insert with a manually backdated created_at.
+	res, err := d.ExecContext(ctx,
+		`INSERT INTO notes (created_at, raw_text, duration_sec, audio_hash) VALUES (?, ?, ?, ?)`,
+		time.Now().Add(-10*time.Minute).Unix(), "old", 3, "abc")
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	id, _ := res.LastInsertId()
+
+	// 5-minute window → out of range.
+	if _, err := d.FindRecentByHash(ctx, "abc", 5*time.Minute); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Errorf("note older than window must not match: %v", err)
+	}
+	// 30-minute window → matches.
+	dup, err := d.FindRecentByHash(ctx, "abc", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("wider window: %v", err)
+	}
+	if dup.ID != id {
+		t.Errorf("dup id: want %d, got %d", id, dup.ID)
+	}
+}
+
+func TestHealth(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	_, _ = d.InsertNote(ctx, "one", 1)
+	_, _ = d.InsertNote(ctx, "two", 1)
+
+	rep, err := d.Health(ctx)
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if rep.IntegrityCheck != "ok" {
+		t.Errorf("integrity_check: want ok, got %q", rep.IntegrityCheck)
+	}
+	if rep.QuickCheck != "ok" {
+		t.Errorf("quick_check: want ok, got %q", rep.QuickCheck)
+	}
+	if rep.NoteCount != 2 {
+		t.Errorf("note_count: want 2, got %d", rep.NoteCount)
+	}
+	if rep.DBSizeBytes <= 0 {
+		t.Errorf("db_size_bytes should be > 0, got %d", rep.DBSizeBytes)
+	}
+}
+
 func TestMigrateIsTracked(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
@@ -521,12 +600,12 @@ func TestMigrateIsTracked(t *testing.T) {
 	// schema_migrations table must record at least the known names.
 	var count int
 	if err := d.QueryRowContext(ctx,
-		`SELECT count(*) FROM schema_migrations WHERE name IN ('001_init.sql', '002_vocab.sql', '003_confidence.sql')`).
+		`SELECT count(*) FROM schema_migrations WHERE name IN ('001_init.sql', '002_vocab.sql', '003_confidence.sql', '004_notes_history.sql', '005_audio_hash.sql')`).
 		Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 3 {
-		t.Errorf("want 3 tracked migrations, got %d", count)
+	if count != 5 {
+		t.Errorf("want 5 tracked migrations, got %d", count)
 	}
 }
 

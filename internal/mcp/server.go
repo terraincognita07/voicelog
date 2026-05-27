@@ -81,8 +81,32 @@ func NewServer(store *db.DB, deps RetranscribeDeps, logger *slog.Logger) *server
 	registerDiscardNotes(s, store, logger)
 	registerRestoreNote(s, store, logger)
 	registerRetranscribe(s, store, deps, logger)
+	registerDBHealth(s, store, logger)
 
 	return s
+}
+
+func registerDBHealth(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("db_health",
+		mcpsdk.WithDescription("Run SQLite's integrity_check + quick_check, then report note count and "+
+			"on-disk size. integrity_check / quick_check return the literal string \"ok\" on a healthy "+
+			"DB; anything else is a real corruption signal. Cheap on a small DB — safe to call ad-hoc "+
+			"(say, weekly) to verify the backup is still readable."),
+		mcpsdk.WithReadOnlyHintAnnotation(true),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		rep, err := store.Health(ctx)
+		if err != nil {
+			logger.Error("db_health", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(rep)
+	})
 }
 
 func registerListPending(s *server.MCPServer, store *db.DB, logger *slog.Logger) {

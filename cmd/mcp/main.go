@@ -84,9 +84,17 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// DB maintenance (WAL checkpoint + monthly VACUUM). Runs only here in
+	// the mcp container so two processes don't race on PRAGMA. Disable
+	// via env if the operator wants to manage maintenance externally.
+	if os.Getenv("DB_MAINTENANCE_DISABLED") == "" {
+		go db.MaintenanceLoop(ctx, store, logger)
+	}
+
 	logger.Info("voicelog mcp listening",
 		"addr", addr, "endpoint", "/mcp", "db", dbPath, "auth", "bearer",
-		"retranscribe", deps.Whisper != nil)
+		"retranscribe", deps.Whisper != nil,
+		"maintenance", os.Getenv("DB_MAINTENANCE_DISABLED") == "")
 
 	errCh := make(chan error, 1)
 	go func() {
