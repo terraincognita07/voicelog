@@ -66,7 +66,7 @@ func TestGetNotesInRange(t *testing.T) {
 
 	from := time.Unix(1700_000_050, 0)
 	to := time.Unix(1700_000_250, 0)
-	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
 	if err != nil {
 		t.Fatalf("range: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestGetNotesInRange(t *testing.T) {
 
 	// Status filter.
 	_, _ = d.ExecContext(ctx, `UPDATE notes SET status='analyzed' WHERE created_at = 1700000200`)
-	pending, err := d.GetNotesInRange(ctx, from, to, "pending", 0)
+	pending, err := d.GetNotesInRange(ctx, from, to, "pending", 0, false)
 	if err != nil {
 		t.Fatalf("range pending: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	to := time.Unix(base+int64(db.MaxNotesInRange)+100, 0)
 
 	// limit=0 → clamp to MaxNotesInRange.
-	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
 	if err != nil {
 		t.Fatalf("range default: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	}
 
 	// Over-cap value also clamps.
-	notes, err = d.GetNotesInRange(ctx, from, to, "", db.MaxNotesInRange*2)
+	notes, err = d.GetNotesInRange(ctx, from, to, "", db.MaxNotesInRange*2, true)
 	if err != nil {
 		t.Fatalf("range over-cap: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	}
 
 	// Smaller explicit limit honored.
-	notes, err = d.GetNotesInRange(ctx, from, to, "", 7)
+	notes, err = d.GetNotesInRange(ctx, from, to, "", 7, true)
 	if err != nil {
 		t.Fatalf("range small limit: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestSearchNotes(t *testing.T) {
 		t.Fatalf("seed 3: %v", err)
 	}
 
-	hits, err := d.SearchNotes(ctx, "voicelog", 10)
+	hits, err := d.SearchNotes(ctx, "voicelog", 10, false)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -164,9 +164,82 @@ func TestSearchNotes(t *testing.T) {
 		t.Fatalf("snippet should wrap matched term in << >>, got %q", hits[0].Snippet)
 	}
 
-	_, err = d.SearchNotes(ctx, "", 10)
+	_, err = d.SearchNotes(ctx, "", 10, false)
 	if err == nil {
 		t.Fatalf("expected error on empty query")
+	}
+}
+
+func TestSearchNotesExcludesDiscardedByDefault(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, _ := d.InsertNote(ctx, "уникальное слово фламинго один", 1)
+	if err := d.MarkDiscarded(ctx, id); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if _, err := d.InsertNote(ctx, "уникальное слово фламинго два", 1); err != nil {
+		t.Fatalf("insert pending: %v", err)
+	}
+
+	hits, err := d.SearchNotes(ctx, "фламинго", 10, false)
+	if err != nil {
+		t.Fatalf("search default: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("default must hide discarded: want 1 hit, got %d", len(hits))
+	}
+	if hits[0].Status != db.StatusPending {
+		t.Fatalf("expected pending hit, got %q", hits[0].Status)
+	}
+
+	all, err := d.SearchNotes(ctx, "фламинго", 10, true)
+	if err != nil {
+		t.Fatalf("search include: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("include_discarded must surface both: got %d", len(all))
+	}
+}
+
+func TestGetNotesInRangeExcludesDiscardedByDefault(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	now := time.Now()
+	if _, err := d.InsertNote(ctx, "pending one", 1); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	id2, _ := d.InsertNote(ctx, "to discard", 1)
+	if err := d.MarkDiscarded(ctx, id2); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	from := now.Add(-time.Hour)
+	to := now.Add(time.Hour)
+
+	def, err := d.GetNotesInRange(ctx, from, to, "", 0, false)
+	if err != nil {
+		t.Fatalf("range default: %v", err)
+	}
+	if len(def) != 1 {
+		t.Fatalf("default must exclude discarded: got %d", len(def))
+	}
+
+	all, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
+	if err != nil {
+		t.Fatalf("range include: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("include_discarded must show both: got %d", len(all))
+	}
+
+	// Explicit status='discarded' wins over include_discarded=false.
+	only, err := d.GetNotesInRange(ctx, from, to, "discarded", 0, false)
+	if err != nil {
+		t.Fatalf("range status discarded: %v", err)
+	}
+	if len(only) != 1 || only[0].Status != db.StatusDiscarded {
+		t.Fatalf("explicit status filter must surface discarded: %+v", only)
 	}
 }
 

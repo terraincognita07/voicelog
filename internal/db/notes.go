@@ -86,13 +86,23 @@ type NoteWithRank struct {
 const MaxNotesInRange = 500
 
 // GetNotesInRange returns notes whose created_at falls in [from, to). If
-// status is non-empty, results are filtered by status as well. limit ≤ 0 or
-// > MaxNotesInRange is clamped to MaxNotesInRange.
-func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status string, limit int) ([]Note, error) {
+// status is non-empty, results are filtered by status. If status is empty
+// AND includeDiscarded is false, discarded notes are excluded — matches
+// the user's "forget this" intent. limit ≤ 0 or > MaxNotesInRange is
+// clamped to MaxNotesInRange.
+func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status string, limit int, includeDiscarded bool) ([]Note, error) {
 	if limit <= 0 || limit > MaxNotesInRange {
 		limit = MaxNotesInRange
 	}
-	if status == "" {
+	if status != "" {
+		return queryNotes(ctx, db, `
+			SELECT id, created_at, raw_text, duration_sec, audio_path, status
+			FROM notes
+			WHERE created_at >= ? AND created_at < ? AND status = ?
+			ORDER BY created_at DESC, id DESC
+			LIMIT ?`, from.Unix(), to.Unix(), status, limit)
+	}
+	if includeDiscarded {
 		return queryNotes(ctx, db, `
 			SELECT id, created_at, raw_text, duration_sec, audio_path, status
 			FROM notes
@@ -103,17 +113,23 @@ func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status st
 	return queryNotes(ctx, db, `
 		SELECT id, created_at, raw_text, duration_sec, audio_path, status
 		FROM notes
-		WHERE created_at >= ? AND created_at < ? AND status = ?
+		WHERE created_at >= ? AND created_at < ? AND status != 'discarded'
 		ORDER BY created_at DESC, id DESC
-		LIMIT ?`, from.Unix(), to.Unix(), status, limit)
+		LIMIT ?`, from.Unix(), to.Unix(), limit)
 }
 
 // SearchNotes runs an FTS5 MATCH and returns rows ordered by bm25 rank
 // (lower rank = better match). query is passed through to FTS5 as-is, so it
 // supports the full FTS5 query syntax (phrases in quotes, OR, NEAR, *).
-func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteWithRank, error) {
+// When includeDiscarded is false (the default callers want), discarded notes
+// are filtered out — they represent the user's explicit "forget this" signal.
+func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeDiscarded bool) ([]NoteWithRank, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("empty query")
+	}
+	statusFilter := ""
+	if !includeDiscarded {
+		statusFilter = ` AND n.status != 'discarded'`
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status,
@@ -121,7 +137,7 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteW
 		       snippet(notes_fts, 0, '<<', '>>', '...', 30) AS snip
 		FROM notes_fts
 		JOIN notes n ON n.id = notes_fts.rowid
-		WHERE notes_fts MATCH ?
+		WHERE notes_fts MATCH ?`+statusFilter+`
 		ORDER BY rank
 		LIMIT ?`, query, limit)
 	if err != nil {

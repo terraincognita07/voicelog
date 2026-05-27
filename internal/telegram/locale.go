@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+// commandHint is one row for Telegram's /-menu (synced via bot.SetCommands).
+// Command names are not localized — only the short description shown next to
+// the slash in the blue menu.
+type commandHint struct {
+	Cmd  string
+	Desc string
+}
+
 // messages is the set of user-visible strings the bot renders. Picked at
 // startup via the BOT_LOCALE env var. Add a new locale by appending an
 // entry to locales below — tests guarantee every locale has every field.
@@ -20,12 +28,24 @@ type messages struct {
 	Error          func(label string, err error) string
 	DiscardBtn     string
 	DiscardedReply func(id int64) string
+	Commands       []commandHint
+	MenuPending    string
+	MenuRecent     string
+	MenuVocab      string
+	MenuHelp       string
 	VocabUsage     string
 	VocabList      func(terms []string) string
 	VocabAdded     func(added, total int) string
 	VocabRemoved   func(term string, ok bool) string
 	VocabClearAsk  string
 	VocabCleared   func(n int) string
+	VocabHeader    func(n int) string
+	VocabRmBtn     func(term string) string
+	VocabAddBtn    string
+	VocabClearBtn  string
+	VocabYesBtn    string
+	VocabNoBtn     string
+	VocabAddPrompt string
 }
 
 var locales = map[string]messages{
@@ -55,6 +75,17 @@ var locales = map[string]messages{
 		DiscardedReply: func(id int64) string {
 			return fmt.Sprintf("🗑 #%d discarded", id)
 		},
+		Commands: []commandHint{
+			{"pending", "last 20 pending notes"},
+			{"recent", "last 10 notes (any status)"},
+			{"vocab", "manage whisper vocabulary"},
+			{"delete", "mark a note as discarded"},
+			{"help", "show commands"},
+		},
+		MenuPending: "📋 Pending",
+		MenuRecent:  "🕘 Recent",
+		MenuVocab:   "📒 Vocab",
+		MenuHelp:    "❓ Help",
 		VocabUsage: "usage:\n" +
 			"/vocab            — show current terms (same as 'list')\n" +
 			"/vocab list       — show current terms\n" +
@@ -84,6 +115,18 @@ var locales = map[string]messages{
 		VocabCleared: func(n int) string {
 			return fmt.Sprintf("✓ wiped %d terms", n)
 		},
+		VocabHeader: func(n int) string {
+			if n == 0 {
+				return "vocabulary is empty"
+			}
+			return fmt.Sprintf("vocabulary (%d):", n)
+		},
+		VocabRmBtn:     func(term string) string { return term + " ❌" },
+		VocabAddBtn:    "➕ Add",
+		VocabClearBtn:  "🗑 Clear",
+		VocabYesBtn:    "✓ Yes, wipe",
+		VocabNoBtn:     "✗ Cancel",
+		VocabAddPrompt: "Send terms separated by spaces (reply to this message).",
 	},
 	"ru": {
 		Help: "voicelog — шли голосовое или аудио.\n\n" +
@@ -111,6 +154,17 @@ var locales = map[string]messages{
 		DiscardedReply: func(id int64) string {
 			return fmt.Sprintf("🗑 #%d отброшено", id)
 		},
+		Commands: []commandHint{
+			{"pending", "последние 20 необработанных"},
+			{"recent", "последние 10 (любой статус)"},
+			{"vocab", "словарь whisper"},
+			{"delete", "пометить заметку как discarded"},
+			{"help", "список команд"},
+		},
+		MenuPending: "📋 Необработанные",
+		MenuRecent:  "🕘 Последние",
+		MenuVocab:   "📒 Словарь",
+		MenuHelp:    "❓ Помощь",
 		VocabUsage: "использование:\n" +
 			"/vocab            — показать текущие термины (то же что 'list')\n" +
 			"/vocab list       — показать текущие термины\n" +
@@ -140,6 +194,18 @@ var locales = map[string]messages{
 		VocabCleared: func(n int) string {
 			return fmt.Sprintf("✓ удалено %d терминов", n)
 		},
+		VocabHeader: func(n int) string {
+			if n == 0 {
+				return "словарь пуст"
+			}
+			return fmt.Sprintf("словарь (%d):", n)
+		},
+		VocabRmBtn:     func(term string) string { return term + " ❌" },
+		VocabAddBtn:    "➕ Добавить",
+		VocabClearBtn:  "🗑 Очистить",
+		VocabYesBtn:    "✓ Да, очистить",
+		VocabNoBtn:     "✗ Отмена",
+		VocabAddPrompt: "Пришли термины через пробел (ответом на это сообщение).",
 	},
 }
 

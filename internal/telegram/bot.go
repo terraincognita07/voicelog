@@ -18,13 +18,19 @@ import (
 )
 
 type Bot struct {
-	bot          *tele.Bot
-	db           *db.DB
-	whisper      *whisper.Client
-	allowedUser  int64
-	logger       *slog.Logger
-	msg          messages
-	basePrompt   string
+	bot         *tele.Bot
+	db          *db.DB
+	whisper     *whisper.Client
+	allowedUser int64
+	logger      *slog.Logger
+	msg         messages
+	basePrompt  string
+
+	mainMenu       *tele.ReplyMarkup
+	btnMenuPending *tele.Btn
+	btnMenuRecent  *tele.Btn
+	btnMenuVocab   *tele.Btn
+	btnMenuHelp    *tele.Btn
 }
 
 // New creates a Bot. locale is "en" or "ru" (or any other key in the
@@ -48,16 +54,47 @@ func New(token, locale, basePrompt string, allowedUser int64, store *db.DB, w *w
 		msg:         pickLocale(locale),
 		basePrompt:  strings.TrimSpace(basePrompt),
 	}
+	tb.buildMenu()
 	tb.registerHandlers()
 	return tb, nil
+}
+
+// buildMenu wires the persistent reply-keyboard (bottom of screen).
+// ReplyButton instances are stored on the Bot so we can route taps to
+// the same handlers as the equivalent / commands.
+func (tb *Bot) buildMenu() {
+	m := &tele.ReplyMarkup{ResizeKeyboard: true}
+	pending := m.Text(tb.msg.MenuPending)
+	recent := m.Text(tb.msg.MenuRecent)
+	vocab := m.Text(tb.msg.MenuVocab)
+	help := m.Text(tb.msg.MenuHelp)
+	m.Reply(
+		m.Row(pending, recent),
+		m.Row(vocab, help),
+	)
+	tb.mainMenu = m
+	tb.btnMenuPending = &pending
+	tb.btnMenuRecent = &recent
+	tb.btnMenuVocab = &vocab
+	tb.btnMenuHelp = &help
 }
 
 func (tb *Bot) Start() { tb.bot.Start() }
 func (tb *Bot) Stop()  { tb.bot.Stop() }
 
-// discardBtn is the prototype inline button used to route callbacks. Its
-// Unique field is the routing key; per-message Data carries the note ID.
-var discardBtn = tele.InlineButton{Unique: "discard"}
+// Callback button prototypes. Each Unique routes to a dedicated handler;
+// per-message Data carries the note ID.
+var (
+	discardBtn        = tele.InlineButton{Unique: "discard"}         // saved-note reply
+	discardPendingBtn = tele.InlineButton{Unique: "discard_pending"} // /pending list
+	discardRecentBtn  = tele.InlineButton{Unique: "discard_recent"}  // /recent list
+	restoreRecentBtn  = tele.InlineButton{Unique: "restore_recent"}  // /recent list
+	vocabRmBtn        = tele.InlineButton{Unique: "vocab_rm"}        // remove one term
+	vocabAddBtn       = tele.InlineButton{Unique: "vocab_add"}       // open add prompt
+	vocabClearAskBtn  = tele.InlineButton{Unique: "vocab_clr_ask"}   // show confirm
+	vocabClearYesBtn  = tele.InlineButton{Unique: "vocab_clr_yes"}   // confirm wipe
+	vocabClearNoBtn   = tele.InlineButton{Unique: "vocab_clr_no"}    // cancel wipe
+)
 
 func (tb *Bot) registerHandlers() {
 	tb.bot.Use(tb.allowOnly())
@@ -71,6 +108,35 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle("/help", tb.cmdHelp)
 	tb.bot.Handle("/vocab", tb.cmdVocab)
 	tb.bot.Handle(&discardBtn, tb.cbDiscard)
+	tb.bot.Handle(&discardPendingBtn, tb.cbDiscardPending)
+	tb.bot.Handle(&discardRecentBtn, tb.cbDiscardRecent)
+	tb.bot.Handle(&restoreRecentBtn, tb.cbRestoreRecent)
+	tb.bot.Handle(&vocabRmBtn, tb.cbVocabRemove)
+	tb.bot.Handle(&vocabAddBtn, tb.cbVocabAddPrompt)
+	tb.bot.Handle(&vocabClearAskBtn, tb.cbVocabClearAsk)
+	tb.bot.Handle(&vocabClearYesBtn, tb.cbVocabClearYes)
+	tb.bot.Handle(&vocabClearNoBtn, tb.cbVocabClearNo)
+	tb.bot.Handle(tele.OnText, tb.onText)
+
+	tb.bot.Handle(tb.btnMenuPending, tb.cmdPending)
+	tb.bot.Handle(tb.btnMenuRecent, tb.cmdRecent)
+	tb.bot.Handle(tb.btnMenuVocab, tb.cmdVocab)
+	tb.bot.Handle(tb.btnMenuHelp, tb.cmdHelp)
+
+	tb.syncMenu()
+}
+
+// syncMenu pushes the locale-specific command hints into Telegram's /-menu
+// (the blue button next to the input). Errors are logged but never block
+// startup — bot must come up even if the API rejects the SetCommands call.
+func (tb *Bot) syncMenu() {
+	cmds := make([]tele.Command, 0, len(tb.msg.Commands))
+	for _, h := range tb.msg.Commands {
+		cmds = append(cmds, tele.Command{Text: h.Cmd, Description: h.Desc})
+	}
+	if err := tb.bot.SetCommands(cmds); err != nil {
+		tb.logger.Warn("setCommands", "err", err)
+	}
 }
 
 func (tb *Bot) allowOnly() tele.MiddlewareFunc {
@@ -90,7 +156,7 @@ func (tb *Bot) allowOnly() tele.MiddlewareFunc {
 }
 
 func (tb *Bot) cmdHelp(c tele.Context) error {
-	return c.Send(tb.msg.Help)
+	return c.Send(tb.msg.Help, tb.mainMenu)
 }
 
 func (tb *Bot) onVoice(c tele.Context) error {
@@ -177,23 +243,175 @@ func (tb *Bot) errReply(c tele.Context, label string, err error) error {
 }
 
 func (tb *Bot) cmdPending(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	notes, err := tb.db.ListPending(ctx, 20)
+	body, kb, err := tb.renderPending(context.Background())
 	if err != nil {
 		return tb.errReply(c, "list pending", err)
 	}
-	return c.Send(tb.formatNotes(notes, false))
+	if kb == nil {
+		return c.Send(body)
+	}
+	return c.Send(body, kb)
 }
 
 func (tb *Bot) cmdRecent(c tele.Context) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	notes, err := tb.db.ListRecent(ctx, 10)
+	body, kb, err := tb.renderRecent(context.Background())
 	if err != nil {
 		return tb.errReply(c, "list recent", err)
 	}
-	return c.Send(tb.formatNotes(notes, true))
+	if kb == nil {
+		return c.Send(body)
+	}
+	return c.Send(body, kb)
+}
+
+// renderPending returns the body text + inline keyboard for the /pending
+// view: each note gets a [🗑 #id] button. Discarded notes never appear here.
+func (tb *Bot) renderPending(ctx context.Context) (string, *tele.ReplyMarkup, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	notes, err := tb.db.ListPending(dbCtx, 20)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(notes) == 0 {
+		return tb.msg.EmptyList, nil, nil
+	}
+	body := tb.formatNotes(notes, false)
+	var row []tele.InlineButton
+	for _, n := range notes {
+		b := discardPendingBtn
+		b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
+		b.Data = strconv.FormatInt(n.ID, 10)
+		row = append(row, b)
+	}
+	return body, &tele.ReplyMarkup{InlineKeyboard: chunkButtons(row, 4)}, nil
+}
+
+// renderRecent returns the body text + inline keyboard for /recent: each
+// note gets either a [🗑 #id] (pending/analyzed) or a [↩ #id] (discarded)
+// button so the user can flip status without leaving the list.
+func (tb *Bot) renderRecent(ctx context.Context) (string, *tele.ReplyMarkup, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	notes, err := tb.db.ListRecent(dbCtx, 10)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(notes) == 0 {
+		return tb.msg.EmptyList, nil, nil
+	}
+	body := tb.formatNotes(notes, true)
+	var row []tele.InlineButton
+	for _, n := range notes {
+		var b tele.InlineButton
+		if n.Status == db.StatusDiscarded {
+			b = restoreRecentBtn
+			b.Text = "↩ #" + strconv.FormatInt(n.ID, 10)
+		} else {
+			b = discardRecentBtn
+			b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
+		}
+		b.Data = strconv.FormatInt(n.ID, 10)
+		row = append(row, b)
+	}
+	return body, &tele.ReplyMarkup{InlineKeyboard: chunkButtons(row, 4)}, nil
+}
+
+// chunkButtons packs a flat button list into rows of width n. Telegram's
+// rendering looks best at 3–4 per row for narrow phone screens.
+func chunkButtons(btns []tele.InlineButton, n int) [][]tele.InlineButton {
+	if n < 1 {
+		n = 1
+	}
+	var out [][]tele.InlineButton
+	for i := 0; i < len(btns); i += n {
+		end := i + n
+		if end > len(btns) {
+			end = len(btns)
+		}
+		out = append(out, btns[i:end])
+	}
+	return out
+}
+
+// editWithList re-renders a list view and edits the source message in
+// place. Used by list-context callbacks (discard/restore) so the keyboard
+// reflects current state after a tap.
+func (tb *Bot) editWithList(c tele.Context, body string, kb *tele.ReplyMarkup) {
+	if kb == nil {
+		_ = c.Edit(body)
+		return
+	}
+	_ = c.Edit(body, kb)
+}
+
+func (tb *Bot) cbDiscardPending(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tb.db.MarkDiscarded(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
+		tb.logger.Error("cb discard pending", "id", id, "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+	}
+	body, kb, err := tb.renderPending(ctx)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbDiscardRecent(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tb.db.MarkDiscarded(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
+		tb.logger.Error("cb discard recent", "id", id, "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+	}
+	body, kb, err := tb.renderRecent(ctx)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbRestoreRecent(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := tb.db.RestoreNote(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
+		tb.logger.Error("cb restore recent", "id", id, "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("restore", err)})
+	}
+	body, kb, err := tb.renderRecent(ctx)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
 }
 
 func (tb *Bot) cmdDelete(c tele.Context) error {
@@ -246,11 +464,14 @@ func (tb *Bot) cmdVocab(c tele.Context) error {
 	defer cancel()
 
 	if len(args) == 0 || args[0] == "list" {
-		terms, err := tb.db.ListVocab(ctx)
+		body, kb, err := tb.renderVocab(ctx)
 		if err != nil {
 			return tb.errReply(c, "vocab list", err)
 		}
-		return c.Send(tb.msg.VocabList(terms))
+		if kb == nil {
+			return c.Send(body)
+		}
+		return c.Send(body, kb)
 	}
 
 	switch args[0] {
@@ -291,6 +512,157 @@ func (tb *Bot) cmdVocab(c tele.Context) error {
 	default:
 		return c.Send(tb.msg.VocabUsage)
 	}
+}
+
+// renderVocab returns the body text + inline keyboard for the /vocab view:
+// each term gets a [term ❌] button; bottom row has [➕ Add] and [🗑 Clear].
+// Returns nil keyboard if the vocabulary is empty AND only the Add/Clear
+// row would be useful — we always include the action row so the user can
+// add the first term without typing.
+func (tb *Bot) renderVocab(ctx context.Context) (string, *tele.ReplyMarkup, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	terms, err := tb.db.ListVocab(dbCtx)
+	if err != nil {
+		return "", nil, err
+	}
+	body := tb.msg.VocabHeader(len(terms))
+	var rows [][]tele.InlineButton
+	var current []tele.InlineButton
+	for _, t := range terms {
+		b := vocabRmBtn
+		b.Text = tb.msg.VocabRmBtn(t)
+		b.Data = t
+		current = append(current, b)
+		if len(current) == 2 {
+			rows = append(rows, current)
+			current = nil
+		}
+	}
+	if len(current) > 0 {
+		rows = append(rows, current)
+	}
+	addB := vocabAddBtn
+	addB.Text = tb.msg.VocabAddBtn
+	clearB := vocabClearAskBtn
+	clearB.Text = tb.msg.VocabClearBtn
+	if len(terms) == 0 {
+		rows = append(rows, []tele.InlineButton{addB})
+	} else {
+		rows = append(rows, []tele.InlineButton{addB, clearB})
+	}
+	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
+}
+
+func (tb *Bot) editWithVocab(c tele.Context, body string, kb *tele.ReplyMarkup) {
+	if kb == nil {
+		_ = c.Edit(body)
+		return
+	}
+	_ = c.Edit(body, kb)
+}
+
+func (tb *Bot) cbVocabRemove(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	term := strings.TrimSpace(cb.Data)
+	if term == "" {
+		return c.Respond()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := tb.db.RemoveVocab(ctx, term); err != nil {
+		tb.logger.Error("cb vocab rm", "term", term, "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("vocab rm", err)})
+	}
+	body, kb, err := tb.renderVocab(ctx)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithVocab(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbVocabAddPrompt(c tele.Context) error {
+	_ = c.Respond()
+	return c.Send(tb.msg.VocabAddPrompt, &tele.ReplyMarkup{ForceReply: true, Selective: true})
+}
+
+func (tb *Bot) cbVocabClearAsk(c tele.Context) error {
+	yes := vocabClearYesBtn
+	yes.Text = tb.msg.VocabYesBtn
+	no := vocabClearNoBtn
+	no.Text = tb.msg.VocabNoBtn
+	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
+	_ = c.Edit(tb.msg.VocabClearAsk, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbVocabClearYes(c tele.Context) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := tb.db.ClearVocab(ctx); err != nil {
+		tb.logger.Error("cb vocab clear", "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("vocab clear", err)})
+	}
+	body, kb, err := tb.renderVocab(ctx)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithVocab(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbVocabClearNo(c tele.Context) error {
+	body, kb, err := tb.renderVocab(context.Background())
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithVocab(c, body, kb)
+	return c.Respond()
+}
+
+// onText catches plain text messages. The only flow that needs it today is
+// the /vocab "Add" force-reply: when the user replies to the prompt sent by
+// cbVocabAddPrompt, we parse the reply as space-separated terms.
+func (tb *Bot) onText(c tele.Context) error {
+	msg := c.Message()
+	if msg == nil || msg.ReplyTo == nil {
+		return nil
+	}
+	if msg.ReplyTo.Sender == nil || tb.bot.Me == nil || msg.ReplyTo.Sender.ID != tb.bot.Me.ID {
+		return nil
+	}
+	if strings.TrimSpace(msg.ReplyTo.Text) != tb.msg.VocabAddPrompt {
+		return nil
+	}
+	terms := strings.Fields(msg.Text)
+	if len(terms) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	added := 0
+	for _, term := range terms {
+		ok, err := tb.db.AddVocab(ctx, term)
+		if err != nil {
+			return tb.errReply(c, "vocab add", err)
+		}
+		if ok {
+			added++
+		}
+	}
+	body, kb, err := tb.renderVocab(ctx)
+	if err != nil {
+		return tb.errReply(c, "refresh", err)
+	}
+	confirmation := tb.msg.VocabAdded(added, len(terms))
+	if kb == nil {
+		return c.Send(confirmation + "\n\n" + body)
+	}
+	return c.Send(confirmation+"\n\n"+body, kb)
 }
 
 func (tb *Bot) formatNotes(notes []db.Note, withStatus bool) string {

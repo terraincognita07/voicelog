@@ -93,7 +93,9 @@ func registerGetRange(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 	tool := mcpsdk.NewTool("get_notes_in_range",
 		mcpsdk.WithDescription("List notes whose created_at falls in [from, to). "+
 			"Both bounds are ISO8601 (e.g. 2026-05-26T00:00:00Z). "+
-			"Optional status filter: pending | analyzed | discarded."),
+			"Discarded notes are excluded by default — they represent the user's "+
+			"'forget this' signal. Set include_discarded=true or status='discarded' "+
+			"if you specifically need them."),
 		mcpsdk.WithReadOnlyHintAnnotation(true),
 		mcpsdk.WithDestructiveHintAnnotation(false),
 		mcpsdk.WithIdempotentHintAnnotation(true),
@@ -105,8 +107,11 @@ func registerGetRange(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 			mcpsdk.Description("Exclusive upper bound, ISO8601."),
 		),
 		mcpsdk.WithString("status",
-			mcpsdk.Description("Optional status filter."),
+			mcpsdk.Description("Optional explicit status filter. When set, overrides include_discarded."),
 			mcpsdk.Enum("pending", "analyzed", "discarded"),
+		),
+		mcpsdk.WithBoolean("include_discarded",
+			mcpsdk.Description("If true, do not auto-filter discarded notes. Ignored when 'status' is set. Default false."),
 		),
 		mcpsdk.WithNumber("limit",
 			mcpsdk.Description(fmt.Sprintf("Maximum notes to return. Default and hard cap %d.", db.MaxNotesInRange)),
@@ -132,12 +137,16 @@ func registerGetRange(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 			return mcpsdk.NewToolResultError(fmt.Sprintf("bad 'to' (need RFC3339): %v", err)), nil
 		}
 		status, _ := req.RequireString("status") // optional
+		includeDiscarded := false
+		if v, err := req.RequireBool("include_discarded"); err == nil {
+			includeDiscarded = v
+		}
 		limit := 0
 		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
 			limit = int(v)
 		}
 
-		notes, err := store.GetNotesInRange(ctx, from, to, status, limit)
+		notes, err := store.GetNotesInRange(ctx, from, to, status, limit, includeDiscarded)
 		if err != nil {
 			logger.Error("get_notes_in_range", "err", err)
 			return mcpsdk.NewToolResultError(err.Error()), nil
@@ -157,7 +166,9 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 			"Results sorted by bm25 rank (lower is better). Each hit includes a 'snippet' "+
 			"field — ~30 tokens around the match with the matched term wrapped in << >> "+
 			"and elided context shown as '...'. Use 'snippet' for dense context; 'raw_text' "+
-			"still carries the full note."),
+			"still carries the full note. Discarded notes are excluded by default — the "+
+			"user explicitly marked them as 'forget this'. Set include_discarded=true only "+
+			"if the user is asking about what they discarded."),
 		mcpsdk.WithReadOnlyHintAnnotation(true),
 		mcpsdk.WithDestructiveHintAnnotation(false),
 		mcpsdk.WithIdempotentHintAnnotation(true),
@@ -167,6 +178,9 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		),
 		mcpsdk.WithNumber("limit",
 			mcpsdk.Description("Maximum hits to return. Default 20."),
+		),
+		mcpsdk.WithBoolean("include_discarded",
+			mcpsdk.Description("If true, include notes the user marked as discarded. Default false."),
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
@@ -180,7 +194,11 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
 			limit = int(v)
 		}
-		hits, err := store.SearchNotes(ctx, query, limit)
+		includeDiscarded := false
+		if v, err := req.RequireBool("include_discarded"); err == nil {
+			includeDiscarded = v
+		}
+		hits, err := store.SearchNotes(ctx, query, limit, includeDiscarded)
 		if err != nil {
 			logger.Error("search_notes", "query", query, "err", err)
 			return mcpsdk.NewToolResultError(err.Error()), nil

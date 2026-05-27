@@ -407,14 +407,16 @@ on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
 
 - **`list_pending_notes(limit?: int = 50)`** —
   last N notes with `status='pending'`, newest first
-- **`get_notes_in_range(from: ISO8601, to: ISO8601, status?: string, limit?: int = 500)`** —
+- **`get_notes_in_range(from: ISO8601, to: ISO8601, status?: string, include_discarded?: bool = false, limit?: int = 500)`** —
   date-window query, optional status filter (`pending|analyzed|discarded`).
-  Hard cap 500 rows per response.
-- **`search_notes(query: string, limit?: int = 20)`** —
+  Discarded notes are excluded by default; pass `include_discarded=true` or
+  `status="discarded"` to surface them. Hard cap 500 rows per response.
+- **`search_notes(query: string, limit?: int = 20, include_discarded?: bool = false)`** —
   SQLite FTS5 MATCH. Supports bare words (AND), `"phrase"`, `term*`,
   `term1 OR term2`. Results sorted by bm25 rank (lower = better). Each hit
   includes a `snippet` field — ~30 tokens around the match with the
   matched term wrapped in `<<` / `>>` and elided context shown as `...`.
+  Discarded notes are filtered out by default; opt in via `include_discarded`.
 - **`get_note(id: int)`** —
   fetch one full note by id. Returns the note object or an error if the
   id is unknown.
@@ -442,14 +444,25 @@ the `locales` map in `internal/telegram/locale.go`.
 - `/recent` — last 10 notes regardless of status
 - `/delete <id>` — mark a note as `discarded`
 - `/vocab` — manage whisper vocabulary (names, jargon, rare terms):
-  - `/vocab` or `/vocab list` — show stored terms
-  - `/vocab add <term> [<term> ...]` — add one or more terms
-  - `/vocab del <term>` — remove one term
-  - `/vocab clear` then `/vocab clear confirm` — wipe everything
+  - `/vocab` or `/vocab list` — interactive view with per-term `[term ❌]`
+    buttons plus `[➕ Add]` and `[🗑 Clear]` at the bottom. `Add` opens a
+    force-reply prompt; `Clear` shows a two-step inline confirm.
+  - `/vocab add <term> [<term> ...]` — batch add via text (no UI)
+  - `/vocab del <term>` — remove one term via text
+  - `/vocab clear confirm` — text-form wipe (same effect as the inline confirm)
 - `/help`, `/start` — show command list
 
-Every saved-note reply ships with an inline `🗑 Discard` button — one tap
-marks the just-recorded note as `discarded` without typing `/delete <id>`.
+### UI
+
+- **Persistent menu** at the bottom of the chat: `Pending` / `Recent` /
+  `Vocab` / `Help`. Each is a one-tap shortcut to the equivalent command.
+- **Synced command menu** (blue button next to the input) — populated on
+  startup via `setMyCommands`; no BotFather configuration needed.
+- **Inline 🗑 button** under every saved-note reply — one tap marks the
+  just-recorded note as `discarded` without typing `/delete <id>`.
+- **Inline action buttons** on `/pending` and `/recent`: each listed note
+  gets a `[🗑 #id]` (or `[↩ #id]` for discarded notes in `/recent`); tap
+  flips status and refreshes the list in place.
 
 The whisper "initial prompt" sent with each transcription is composed as
 `WHISPER_PROMPT` (env, admin-default) followed by the `/vocab` terms.

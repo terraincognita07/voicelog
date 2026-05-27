@@ -59,6 +59,29 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.VocabCleared == nil || m.VocabCleared(3) == "" {
 				t.Error("VocabCleared missing or returns empty")
 			}
+			if len(m.Commands) == 0 {
+				t.Error("Commands list is empty")
+			}
+			if m.MenuPending == "" || m.MenuRecent == "" || m.MenuVocab == "" || m.MenuHelp == "" {
+				t.Error("Menu labels missing")
+			}
+			if m.VocabHeader == nil || m.VocabHeader(0) == "" || m.VocabHeader(3) == "" {
+				t.Error("VocabHeader missing or returns empty")
+			}
+			if m.VocabRmBtn == nil || m.VocabRmBtn("x") == "" {
+				t.Error("VocabRmBtn missing or returns empty")
+			}
+			if m.VocabAddBtn == "" || m.VocabClearBtn == "" || m.VocabYesBtn == "" || m.VocabNoBtn == "" {
+				t.Error("Vocab inline buttons missing")
+			}
+			if m.VocabAddPrompt == "" {
+				t.Error("VocabAddPrompt is empty")
+			}
+			for i, h := range m.Commands {
+				if h.Cmd == "" || h.Desc == "" {
+					t.Errorf("Commands[%d] has empty field: %+v", i, h)
+				}
+			}
 		})
 	}
 }
