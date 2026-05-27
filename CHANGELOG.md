@@ -33,6 +33,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   (bot still passes `0.0` as the "let telegram.New pick" signal, mcp
   still uses `0.6` directly).
 
+### Tests
+
+- **`whisper.transcribeWAV` HTTP coverage** via `httptest.NewServer`:
+  verbose_json happy path, plain-json fallback (no segments), prompt
+  presence/absence in multipart, HTTP error propagation, malformed
+  JSON body, missing wav file. Outer `Transcribe` (with its ffmpeg
+  pre-step) still depends on a real ffmpeg binary at test time.
+
 ### Fixed
 
 - **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply
