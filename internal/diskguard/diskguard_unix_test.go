@@ -9,16 +9,15 @@ import (
 )
 
 // TestFreeBytes_Unix_RealisticRange confirms the value returned for a
-// real temp dir is a believable free-bytes number — > 0 (covered by
-// the common test too) AND strictly less than the non-Unix sentinel
-// math.MaxUint64. If this fails, someone likely accidentally hit the
-// non-Unix code path on Unix.
+// real temp dir is a real Statfs reading, not the non-Unix sentinel.
+// math.MaxUint64 is what diskguard_other.go returns; on a Unix build
+// hitting that exact value would mean the wrong file shipped.
 func TestFreeBytes_Unix_RealisticRange(t *testing.T) {
 	got, err := FreeBytes(t.TempDir())
 	if err != nil {
 		t.Fatalf("FreeBytes: %v", err)
 	}
-	if got >= math.MaxUint64 {
+	if got == math.MaxUint64 {
 		t.Errorf("FreeBytes returned the non-Unix sentinel on a Unix build: %d", got)
 	}
 }
