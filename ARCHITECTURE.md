@@ -1,0 +1,133 @@
+# Architecture
+
+voicelog is a small Go service split across three containers that share one
+SQLite database. The architecture stays intentionally simple: no message
+queue, no background workers beyond a few goroutines, no caches, no ORM.
+
+## Containers
+
+```
+┌──────────────────────┐    ┌──────────────────────┐    ┌──────────────────────┐
+│      whisper         │    │         bot          │    │         mcp          │
+│  whisper.cpp server  │◀───┤  Telegram poller     │    │  HTTP MCP server     │
+│  (OpenAI-compatible) │    │  ffmpeg → whisper    │    │  bearer-auth /mcp    │
+│  internal, no auth   │    │  SQLite writer       │    │  SQLite reader+writer│
+└──────────────────────┘    └──────────────────────┘    └──────────────────────┘
+                                       │                          │
+                                       └───── ./data/voicelog.db ─┘
+                                                (SQLite + FTS5, WAL)
+```
+
+- **whisper** — `ggerganov/whisper.cpp` server image. CPU-only inference.
+  No auth, internal compose network only.
+- **bot** — long-polls Telegram, downloads voice messages, runs ffmpeg →
+  whisper, persists transcriptions, owns audio retention copy step.
+- **mcp** — HTTP server exposing 11 tools to Claude. Bearer-token auth.
+  Runs the DB maintenance loop (weekly WAL checkpoint + monthly VACUUM).
+
+## Code layout
+
+```
+voicelog/
+├── cmd/
+│   ├── bot/main.go          # wiring + env parsing
+│   └── mcp/main.go          # wiring + env parsing + bearer auth
+├── internal/
+│   ├── audio/               # opt-in audio retention (SaveOriginal + Janitor)
+│   ├── db/                  # all SQL lives here
+│   ├── diskguard/           # build-tagged free-space probe (unix / other)
+│   ├── mcp/                 # MCP tool registrations
+│   ├── telegram/            # bot handlers, locale, list views, vocab UI
+│   └── whisper/             # HTTP client to whisper.cpp
+└── migrations/              # forward-only NNN_name.sql + embed.FS wrapper
+```
+
+## Layering rules
+
+Strict — enforced by review, not by build:
+
+| Layer | What it does | Must NOT |
+|---|---|---|
+| `cmd/{bot,mcp}` | env parsing, dependency wiring | contain business logic |
+| `internal/telegram` | Telegram updates, inline keyboards | reach into DB directly (always via `internal/db`) |
+| `internal/mcp` | MCP tool registrations | implement business logic (delegate to db/whisper) |
+| `internal/db` | all SQL, migrations, transactions | know about HTTP, Telegram, MCP |
+| `internal/whisper` | HTTP client to whisper.cpp | parse user input |
+| `internal/audio` | retain raw .oga, sweep old files | mutate `notes` table directly (delegate to db) |
+| `internal/diskguard` | platform-specific syscall | depend on anything except `syscall` |
+
+## Persistence
+
+- SQLite + FTS5 + WAL mode.
+- Schema lives in `migrations/NNN_name.sql`, applied forward-only via
+  `internal/db/db.go::Migrate`. A `schema_migrations` table tracks applied
+  filenames so non-idempotent statements (`ALTER ADD COLUMN`) run exactly once.
+- All queries are parameterized. FTS5 MATCH passes user input as a bind value.
+- The `notes` table is the only mutable state worth backing up; `vocabulary`
+  and `notes_history` are nice-to-have. `./data/voicelog.db` (+ `-wal` + `-shm`)
+  is the entire backup unit.
+
+## Telegram bot surface
+
+Reading order:
+
+1. `bot.go` — Bot struct + middleware + voice handling + simple `/start`,
+   `/help`, `/delete`.
+2. `errors.go` — sanitization layer (`userErrMsg`, `errReply`, `errToast`).
+3. `saved_reply.go` — what the user sees after recording a voice.
+4. `list_view.go` — `/pending` and `/recent`. State encoding, day grouping,
+   filter chips, "Show more" pagination, mass-discard confirm. Generic
+   `cbListAction[S any]` helper de-duplicates the parse → mutate → re-render
+   pattern.
+5. `vocab.go` — `/vocab` interactive editor with force-reply add prompt.
+6. `locale.go` — every user-facing string in en + ru.
+
+All inline-keyboard views thread their full state through callback `Data`
+fields (capped at 64 bytes by Telegram). A unit test asserts the worst-case
+encoding fits.
+
+## MCP surface
+
+Server: `internal/mcp/server.go`. Eleven tools as of 2026-05-28:
+
+| Tool | Mutating? | Notes |
+|---|---|---|
+| `list_pending_notes` | no | basic CRUD |
+| `get_notes_in_range` | no | + `include_discarded` opt-in |
+| `search_notes` | no | FTS5 + bm25 + 30-token snippet |
+| `get_note` | no | full raw_text |
+| `mark_analyzed` | yes | batch |
+| `discard_notes` | yes | batch, reversible |
+| `restore_note` | yes | only `discarded → pending` |
+| `retranscribe` | yes | requires audio retention; archives to `notes_history` |
+| `db_health` | no | `PRAGMA integrity_check` + counts |
+
+Every tool sets `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
+`OpenWorldHint` explicitly.
+
+## Background loops
+
+- `audio.Janitor` (bot container, when `AUDIO_RETENTION_DAYS > 0`): every 6h
+  deletes retained `.oga` files older than the window and nulls
+  `notes.audio_path`. Safety rail: `pathInside` refuses paths that escape
+  the managed dir.
+- `db.MaintenanceLoop` (mcp container only, unless `DB_MAINTENANCE_DISABLED`):
+  weekly `wal_checkpoint(TRUNCATE)`, monthly `VACUUM`.
+
+## Security model
+
+See `README.md` § "Security model" and `SECURITY.md`. Bearer token is the
+only credential for MCP; `ALLOWED_USER_ID` is the only credential for the
+bot. The threat-model boundary is **single-user self-host** — extending into
+multi-tenant requires audit-log + rate-limit + token-per-tenant work that is
+deliberately out of scope.
+
+## Where to start as a contributor
+
+- Bug in the bot UI → start at `internal/telegram/list_view.go` or
+  `saved_reply.go`.
+- Bug in an MCP tool → start at `internal/mcp/server.go`.
+- Schema change → start with a new `migrations/NNN_name.sql`, then add
+  read/write helpers to `internal/db`.
+- Whisper-side change → `internal/whisper/client.go` + `Result.Aggregate`.
+- New tests → next to the file under test (`foo_test.go` beside `foo.go`).

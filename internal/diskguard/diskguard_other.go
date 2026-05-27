@@ -1,5 +1,7 @@
 //go:build !unix
 
+// See diskguard_unix.go for the package overview. This file is the
+// no-op stub used on Windows / unsupported platforms.
 package diskguard
 
 import "math"
