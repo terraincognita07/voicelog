@@ -35,6 +35,11 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:
       - ./data:/data
+    # depends_on: whisper so the retranscribe MCP tool can reach
+    # http://whisper:8080/inference. Soft dep — mcp also boots without
+    # WHISPER_URL set (then retranscribe just reports unavailable).
+    depends_on:
+      - whisper
     # Bound to localhost only. Expose to the internet via a reverse proxy with
     # TLS (see README) so Claude.ai's remote MCP connector can reach /mcp.
     ports:

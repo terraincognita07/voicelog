@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -402,6 +403,105 @@ func TestInsertNoteWithMeta(t *testing.T) {
 	}
 	if !got2.SuspectHallucination {
 		t.Errorf("suspect should be true")
+	}
+}
+
+func TestArchiveAndUpdateText(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, err := d.InsertNote(ctx, "original transcription", 5)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// First retranscribe: new text, no meta. Old text returned for diffing.
+	oldText, err := d.ArchiveAndUpdateText(ctx, id, "first re-run text", "small-q5_1", db.NoteMeta{})
+	if err != nil {
+		t.Fatalf("archive 1: %v", err)
+	}
+	if oldText != "original transcription" {
+		t.Errorf("returned old text: want original, got %q", oldText)
+	}
+	got, _ := d.GetNote(ctx, id)
+	if got.RawText != "first re-run text" {
+		t.Errorf("note not updated: %q", got.RawText)
+	}
+
+	// Second retranscribe: with confidence meta. Each run archives the
+	// previous text → 2 rows in notes_history.
+	overall, worst := -0.3, -0.6
+	oldText2, err := d.ArchiveAndUpdateText(ctx, id, "second re-run text", "medium-q5_0", db.NoteMeta{
+		ConfidenceOverall:    &overall,
+		ConfidenceMin:        &worst,
+		SuspectHallucination: false,
+	})
+	if err != nil {
+		t.Fatalf("archive 2: %v", err)
+	}
+	if oldText2 != "first re-run text" {
+		t.Errorf("returned old text 2: want first re-run, got %q", oldText2)
+	}
+	got2, _ := d.GetNote(ctx, id)
+	if got2.RawText != "second re-run text" || !got2.ConfidenceOverall.Valid {
+		t.Errorf("note state after 2nd: %+v", got2)
+	}
+
+	// notes_history should have exactly 2 rows for this note, oldest first.
+	rows, err := d.QueryContext(ctx,
+		`SELECT raw_text, model FROM notes_history WHERE note_id = ? ORDER BY replaced_at ASC, id ASC`, id)
+	if err != nil {
+		t.Fatalf("history query: %v", err)
+	}
+	defer rows.Close()
+	var history []struct {
+		text, model string
+	}
+	for rows.Next() {
+		var h struct{ text, model string }
+		var modelNull sql.NullString
+		if err := rows.Scan(&h.text, &modelNull); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		h.model = modelNull.String
+		history = append(history, h)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history rows: want 2, got %d", len(history))
+	}
+	if history[0].text != "original transcription" || history[0].model != "small-q5_1" {
+		t.Errorf("history[0]: %+v", history[0])
+	}
+	if history[1].text != "first re-run text" || history[1].model != "medium-q5_0" {
+		t.Errorf("history[1]: %+v", history[1])
+	}
+}
+
+func TestArchiveAndUpdateText_NoteMissing(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	_, err := d.ArchiveAndUpdateText(ctx, 9999, "x", "", db.NoteMeta{})
+	if !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound, got %v", err)
+	}
+}
+
+func TestArchiveAndUpdateText_FTSReflectsNewText(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, _ := d.InsertNote(ctx, "уникальное слово альфа", 3)
+	if _, err := d.ArchiveAndUpdateText(ctx, id, "уникальное слово бета", "", db.NoteMeta{}); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	// Existing FTS UPDATE trigger should swap old → new in the index.
+	hits, _ := d.SearchNotes(ctx, "альфа", 10, false)
+	if len(hits) != 0 {
+		t.Errorf("old term still in FTS index after retranscribe: %d hits", len(hits))
+	}
+	hits, _ = d.SearchNotes(ctx, "бета", 10, false)
+	if len(hits) != 1 {
+		t.Errorf("new term not indexed: %d hits", len(hits))
 	}
 }
 

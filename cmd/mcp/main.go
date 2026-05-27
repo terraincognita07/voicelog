@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"voicelog/internal/db"
 	"voicelog/internal/mcp"
+	"voicelog/internal/whisper"
 	"voicelog/migrations"
 )
 
@@ -50,7 +52,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	mcpServer := mcp.NewServer(store, logger)
+	// Optional: wire whisper so the retranscribe MCP tool can re-run
+	// transcription on retained audio. If WHISPER_URL is unset, the tool
+	// is still registered but returns a clear "unavailable" error.
+	var deps mcp.RetranscribeDeps
+	if whisperURL := os.Getenv("WHISPER_URL"); whisperURL != "" {
+		deps.Whisper = whisper.New(whisperURL)
+		deps.BasePrompt = os.Getenv("WHISPER_PROMPT")
+		deps.HallucinationThresh = 0.6 // matches the bot's default
+		if v := os.Getenv("HALLUCINATION_THRESHOLD"); v != "" {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 || f > 1 {
+				logger.Error("HALLUCINATION_THRESHOLD must be a float in [0, 1]", "value", v)
+				os.Exit(1)
+			}
+			deps.HallucinationThresh = f
+		}
+	}
+
+	mcpServer := mcp.NewServer(store, deps, logger)
 
 	mcpHTTP := server.NewStreamableHTTPServer(mcpServer,
 		server.WithEndpointPath("/mcp"),
@@ -65,7 +85,8 @@ func main() {
 	}
 
 	logger.Info("voicelog mcp listening",
-		"addr", addr, "endpoint", "/mcp", "db", dbPath, "auth", "bearer")
+		"addr", addr, "endpoint", "/mcp", "db", dbPath, "auth", "bearer",
+		"retranscribe", deps.Whisper != nil)
 
 	errCh := make(chan error, 1)
 	go func() {

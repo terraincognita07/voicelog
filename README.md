@@ -32,6 +32,7 @@ an MCP server you self-host.
                                        │   mark_analyzed
                                        │   discard_notes
                                        │   restore_note
+                                       │   retranscribe
                                        ▼
     Claude.ai ← MCP over HTTPS ── nginx ── | voicelog-mcp  |
 ```
@@ -438,6 +439,15 @@ on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
   flip a single discarded note back to `pending`. Returns
   `{restored: bool}` — `true` if it was discarded and got restored,
   `false` if it exists but was not in `discarded` state.
+- **`retranscribe(id: int)`** —
+  re-run whisper on the note's retained audio file (requires
+  `AUDIO_RETENTION_DAYS > 0` on the bot side, AND the note's audio still
+  on disk). The previous `raw_text` is archived in `notes_history`
+  before the row is updated, so the change is reversible at the SQL
+  level. Returns `{note_id, old_text, new_text, confidence_overall,
+  confidence_min, suspect_hallucination}` so the caller can summarize
+  the diff. Requires the mcp container to be wired with `WHISPER_URL`
+  (see `docker-compose.yml`).
 
 Tool schemas are visible via standard MCP `tools/list`.
 
