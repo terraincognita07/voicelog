@@ -77,6 +77,15 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.VocabAddPrompt == "" {
 				t.Error("VocabAddPrompt is empty")
 			}
+			if m.ClearAllBtn == "" || m.ClearAllAsk == "" || m.ClearAllYesBtn == "" || m.ClearAllNoBtn == "" {
+				t.Error("Clear-all labels missing")
+			}
+			if m.ClearAllDone == nil || m.ClearAllDone(3) == "" {
+				t.Error("ClearAllDone missing or empty")
+			}
+			if m.GoDiscardedBtn == "" || m.ShowMoreBtn == "" || m.FilterAllBtn == "" || m.FilterPendingBtn == "" || m.FilterDiscardedBtn == "" {
+				t.Error("List nav labels missing")
+			}
 			for i, h := range m.Commands {
 				if h.Cmd == "" || h.Desc == "" {
 					t.Errorf("Commands[%d] has empty field: %+v", i, h)

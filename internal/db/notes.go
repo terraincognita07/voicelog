@@ -186,6 +186,19 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeD
 	return out, rows.Err()
 }
 
+// DiscardAllPending flips every pending note to discarded in one statement.
+// Returns the number of rows actually changed (0 if no pending exists).
+// Idempotent.
+func (db *DB) DiscardAllPending(ctx context.Context) (int, error) {
+	res, err := db.ExecContext(ctx,
+		`UPDATE notes SET status = 'discarded' WHERE status = 'pending'`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // GetNote fetches a single note by ID. Returns ErrNoteNotFound if absent.
 func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
 	var n Note

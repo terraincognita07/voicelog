@@ -455,14 +455,26 @@ the `locales` map in `internal/telegram/locale.go`.
 ### UI
 
 - **Persistent menu** at the bottom of the chat: `Pending` / `Recent` /
-  `Vocab` / `Help`. Each is a one-tap shortcut to the equivalent command.
+  `Vocab` / `Help`. One-tap shortcut to the equivalent command.
 - **Synced command menu** (blue button next to the input) — populated on
   startup via `setMyCommands`; no BotFather configuration needed.
 - **Inline 🗑 button** under every saved-note reply — one tap marks the
   just-recorded note as `discarded` without typing `/delete <id>`.
-- **Inline action buttons** on `/pending` and `/recent`: each listed note
-  gets a `[🗑 #id]` (or `[↩ #id]` for discarded notes in `/recent`); tap
-  flips status and refreshes the list in place.
+- **Day-grouped lists** on `/pending` and `/recent`: notes are split into
+  `📅 today (N)` / `📅 yesterday (N)` / `📅 2026-05-26 (N)` sections.
+  Today is always expanded; older days are collapsed and shown as a
+  single `[📅 date (N)]` button — tap to expand (one extra day at a time).
+- **Status filter chips** at the top of `/recent`: `[All] [Pending]
+  [Discarded]`; active chip prefixed with `•`. Discard/restore/pagination/
+  day-expand all preserve the active filter.
+- **Inline action buttons** for every visible note: `[🗑 #id]` (or
+  `[↩ #id]` for discarded notes). Tap flips status and re-renders the
+  list in place with the same filter, page, and expanded day.
+- **`[⤵ Show more]`** grows the list by one page; capped at 40 notes per
+  message to stay under Telegram's 4096-byte limit.
+- **`[🗑 Clear all]`** under `/pending` mass-discards every pending note
+  in one atomic UPDATE, with a two-step Yes/No confirm. Reversible per-note
+  via the `[Discarded]` filter and `↩`.
 
 The whisper "initial prompt" sent with each transcription is composed as
 `WHISPER_PROMPT` (env, admin-default) followed by the `/vocab` terms.

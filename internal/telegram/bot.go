@@ -95,9 +95,14 @@ var (
 	vocabClearYesBtn  = tele.InlineButton{Unique: "vocab_clr_yes"}   // confirm wipe
 	vocabClearNoBtn   = tele.InlineButton{Unique: "vocab_clr_no"}    // cancel wipe
 
-	pendingMoreBtn  = tele.InlineButton{Unique: "pending_more"}  // grow /pending list
-	recentMoreBtn   = tele.InlineButton{Unique: "recent_more"}   // grow /recent list
-	recentFilterBtn = tele.InlineButton{Unique: "recent_filter"} // status filter chip
+	pendingMoreBtn     = tele.InlineButton{Unique: "pending_more"}      // grow /pending list
+	recentMoreBtn      = tele.InlineButton{Unique: "recent_more"}       // grow /recent list
+	recentFilterBtn    = tele.InlineButton{Unique: "recent_filter"}     // status filter chip
+	pendingClearAskBtn = tele.InlineButton{Unique: "pending_clear_ask"} // ask before mass discard
+	pendingClearYesBtn = tele.InlineButton{Unique: "pending_clear_yes"} // confirm mass discard
+	pendingClearNoBtn  = tele.InlineButton{Unique: "pending_clear_no"}  // cancel mass discard
+	pendingDayBtn      = tele.InlineButton{Unique: "pending_day"}       // toggle day fold in /pending
+	recentDayBtn       = tele.InlineButton{Unique: "recent_day"}        // toggle day fold in /recent
 )
 
 // pendingPageSize / recentPageSize are the default visible windows. They
@@ -143,6 +148,11 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&pendingMoreBtn, tb.cbPendingMore)
 	tb.bot.Handle(&recentMoreBtn, tb.cbRecentMore)
 	tb.bot.Handle(&recentFilterBtn, tb.cbRecentFilter)
+	tb.bot.Handle(&pendingClearAskBtn, tb.cbPendingClearAsk)
+	tb.bot.Handle(&pendingClearYesBtn, tb.cbPendingClearYes)
+	tb.bot.Handle(&pendingClearNoBtn, tb.cbPendingClearNo)
+	tb.bot.Handle(&pendingDayBtn, tb.cbPendingDay)
+	tb.bot.Handle(&recentDayBtn, tb.cbRecentDay)
 	tb.bot.Handle(tele.OnText, tb.onText)
 
 	tb.bot.Handle(tb.btnMenuPending, tb.cmdPending)
@@ -271,8 +281,220 @@ func (tb *Bot) errReply(c tele.Context, label string, err error) error {
 	return c.Send(tb.msg.Error(label, err))
 }
 
+// --- list view: state encoding ---------------------------------------------
+//
+// Both /pending and /recent are stateful inline-keyboard views. The state
+// (active filter, page limit, day expanded besides today) MUST round-trip
+// through every callback so taps don't reset the view. Each button at
+// render time embeds the current state in its Data; handlers decode +
+// optionally mutate + re-render.
+//
+// Encoding format (colon-separated, low-overhead, fits 64-byte cap):
+//   pending:  "limit:expDay"
+//   recent:   "filter:limit:expDay"
+//   action+state: "id:" prefix prepended to the state encoding
+//
+// expDay is "" or "YYYY-MM-DD". filter is "" (= all), "pending", or
+// "discarded". Defensive parsing: any missing/garbage field falls back
+// to safe defaults so stale buttons after a deploy don't crash.
+
+type pendingState struct {
+	Limit  int
+	ExpDay string
+}
+
+func (s pendingState) encode() string {
+	return strconv.Itoa(s.Limit) + ":" + s.ExpDay
+}
+
+func (s pendingState) encodeWithID(id int64) string {
+	return strconv.FormatInt(id, 10) + ":" + s.encode()
+}
+
+func parsePendingState(raw string) pendingState {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	s := pendingState{Limit: pendingPageSize}
+	if len(parts) > 0 {
+		if n, err := strconv.Atoi(parts[0]); err == nil && n > 0 {
+			s.Limit = n
+		}
+	}
+	if len(parts) == 2 {
+		s.ExpDay = validDateKey(parts[1])
+	}
+	return s
+}
+
+// parsePendingStateWithID consumes one leading int64 then the state encoding.
+func parsePendingStateWithID(raw string) (int64, pendingState) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	id, _ := strconv.ParseInt(parts[0], 10, 64)
+	rest := ""
+	if len(parts) == 2 {
+		rest = parts[1]
+	}
+	return id, parsePendingState(rest)
+}
+
+type recentState struct {
+	Filter string
+	Limit  int
+	ExpDay string
+}
+
+func (s recentState) encode() string {
+	f := s.Filter
+	if f == "" {
+		f = "all"
+	}
+	return f + ":" + strconv.Itoa(s.Limit) + ":" + s.ExpDay
+}
+
+func (s recentState) encodeWithID(id int64) string {
+	return strconv.FormatInt(id, 10) + ":" + s.encode()
+}
+
+func parseRecentState(raw string) recentState {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 3)
+	s := recentState{Limit: recentPageSize}
+	if len(parts) > 0 && parts[0] != "all" {
+		s.Filter = validRecentFilter(parts[0])
+	}
+	if len(parts) >= 2 {
+		if n, err := strconv.Atoi(parts[1]); err == nil && n > 0 {
+			s.Limit = n
+		}
+	}
+	if len(parts) == 3 {
+		s.ExpDay = validDateKey(parts[2])
+	}
+	return s
+}
+
+func parseRecentStateWithID(raw string) (int64, recentState) {
+	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+	id, _ := strconv.ParseInt(parts[0], 10, 64)
+	rest := ""
+	if len(parts) == 2 {
+		rest = parts[1]
+	}
+	return id, parseRecentState(rest)
+}
+
+// validDateKey accepts only "YYYY-MM-DD". Anything else (including empty
+// or garbage) collapses to "". Prevents injection of arbitrary strings
+// into our state via crafted callback data.
+func validDateKey(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// --- list view: day grouping & body rendering ------------------------------
+
+type dayGroup struct {
+	dateKey string
+	label   string
+	notes   []db.Note
+}
+
+// groupByDay walks notes (already sorted DESC by created_at) and splits
+// them into per-day groups. Labels for today / yesterday are localized;
+// everything else uses ISO date.
+func (tb *Bot) groupByDay(notes []db.Note) []dayGroup {
+	if len(notes) == 0 {
+		return nil
+	}
+	todayKey := time.Now().Format("2006-01-02")
+	yesterdayKey := time.Now().Add(-24 * time.Hour).Format("2006-01-02")
+	var out []dayGroup
+	for _, n := range notes {
+		key := n.CreatedAt.Format("2006-01-02")
+		if len(out) == 0 || out[len(out)-1].dateKey != key {
+			label := key
+			switch key {
+			case todayKey:
+				label = tb.msg.DayToday
+			case yesterdayKey:
+				label = tb.msg.DayYesterday
+			}
+			out = append(out, dayGroup{dateKey: key, label: label})
+		}
+		out[len(out)-1].notes = append(out[len(out)-1].notes, n)
+	}
+	return out
+}
+
+// formatNoteLine: "#9 22:04 · short text…". withStatus appends [status].
+func formatNoteLine(n db.Note, withStatus bool) string {
+	text := strings.ReplaceAll(n.RawText, "\n", " ")
+	runes := []rune(text)
+	if len(runes) > 60 {
+		text = string(runes[:60]) + "…"
+	}
+	ts := n.CreatedAt.Format("15:04")
+	if withStatus {
+		return fmt.Sprintf("#%d %s [%s] · %s", n.ID, ts, n.Status, text)
+	}
+	return fmt.Sprintf("#%d %s · %s", n.ID, ts, text)
+}
+
+// renderDayGroupedBody walks the groups and produces the body text.
+// Today is always expanded. Other days expanded only when their dateKey
+// matches expDay. Collapsed days appear as a header with note count only.
+func (tb *Bot) renderDayGroupedBody(groups []dayGroup, expDay string, withStatus bool) string {
+	if len(groups) == 0 {
+		return tb.msg.EmptyList
+	}
+	todayKey := time.Now().Format("2006-01-02")
+	var b strings.Builder
+	for i, g := range groups {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(tb.msg.DayHeader(g.label, len(g.notes)))
+		expanded := g.dateKey == todayKey || g.dateKey == expDay
+		if !expanded {
+			continue
+		}
+		for _, n := range g.notes {
+			b.WriteByte('\n')
+			b.WriteString(formatNoteLine(n, withStatus))
+		}
+	}
+	return b.String()
+}
+
+// visibleNotesAndDayToggles splits groups into:
+//   - visible notes (today + the expanded day, if any) for which we render
+//     action buttons (🗑/↩) right under the body.
+//   - day-toggle groups for every non-today day (both collapsed AND the
+//     currently expanded one — so the user can collapse the expanded day
+//     by tapping its header).
+func visibleNotesAndDayToggles(groups []dayGroup, expDay string) ([]db.Note, []dayGroup) {
+	todayKey := time.Now().Format("2006-01-02")
+	var visible []db.Note
+	var toggles []dayGroup
+	for _, g := range groups {
+		if g.dateKey == todayKey {
+			visible = append(visible, g.notes...)
+			continue
+		}
+		if g.dateKey == expDay {
+			visible = append(visible, g.notes...)
+		}
+		toggles = append(toggles, g)
+	}
+	return visible, toggles
+}
+
 func (tb *Bot) cmdPending(c tele.Context) error {
-	body, kb, err := tb.renderPending(context.Background(), pendingPageSize)
+	body, kb, err := tb.renderPending(context.Background(), pendingState{Limit: pendingPageSize})
 	if err != nil {
 		return tb.errReply(c, "list pending", err)
 	}
@@ -280,7 +502,7 @@ func (tb *Bot) cmdPending(c tele.Context) error {
 }
 
 func (tb *Bot) cmdRecent(c tele.Context) error {
-	body, kb, err := tb.renderRecent(context.Background(), "", recentPageSize)
+	body, kb, err := tb.renderRecent(context.Background(), recentState{Limit: recentPageSize})
 	if err != nil {
 		return tb.errReply(c, "list recent", err)
 	}
@@ -306,68 +528,94 @@ func clampPage(n int) int {
 	return n
 }
 
-// renderPending returns the body text + inline keyboard for /pending.
-// Each visible note gets a [🗑 #id] button. If more pending notes exist
-// beyond `limit`, a [Show more] row is appended.
-func (tb *Bot) renderPending(ctx context.Context, limit int) (string, *tele.ReplyMarkup, error) {
-	limit = clampPage(limit)
+// renderPending builds the day-grouped /pending view. State threads
+// through all buttons so taps preserve {limit, expDay}.
+func (tb *Bot) renderPending(ctx context.Context, st pendingState) (string, *tele.ReplyMarkup, error) {
+	st.Limit = clampPage(st.Limit)
+	st.ExpDay = validDateKey(st.ExpDay)
+
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	// Fetch one extra to detect "has more".
-	notes, err := tb.db.ListPending(dbCtx, limit+1)
+	notes, err := tb.db.ListPending(dbCtx, st.Limit+1)
 	if err != nil {
 		return "", nil, err
 	}
-	hasMore := len(notes) > limit
+	hasMore := len(notes) > st.Limit
 	if hasMore {
-		notes = notes[:limit]
+		notes = notes[:st.Limit]
 	}
 	if len(notes) == 0 {
 		return tb.msg.EmptyList, tb.escapeFromEmpty(), nil
 	}
-	body := tb.formatNotes(notes, false)
+
+	groups := tb.groupByDay(notes)
+	body := tb.renderDayGroupedBody(groups, st.ExpDay, false)
+	visible, toggles := visibleNotesAndDayToggles(groups, st.ExpDay)
+
 	var actions []tele.InlineButton
-	for _, n := range notes {
+	for _, n := range visible {
 		b := discardPendingBtn
 		b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
-		b.Data = strconv.FormatInt(n.ID, 10)
+		b.Data = st.encodeWithID(n.ID)
 		actions = append(actions, b)
 	}
 	rows := chunkButtons(actions, 4)
-	if hasMore && limit < maxListNotes {
+
+	for _, g := range toggles {
+		btn := pendingDayBtn
+		btn.Text = tb.msg.DayHeader(g.label, len(g.notes))
+		// Toggle semantics: if this day is currently expanded, encode "" (collapse).
+		newExp := g.dateKey
+		if g.dateKey == st.ExpDay {
+			newExp = ""
+		}
+		btn.Data = pendingState{Limit: st.Limit, ExpDay: newExp}.encode()
+		rows = append(rows, []tele.InlineButton{btn})
+	}
+
+	if hasMore && st.Limit < maxListNotes {
 		more := pendingMoreBtn
 		more.Text = tb.msg.ShowMoreBtn
-		more.Data = strconv.Itoa(limit + pendingPageSize)
+		more.Data = pendingState{Limit: st.Limit + pendingPageSize, ExpDay: st.ExpDay}.encode()
 		rows = append(rows, []tele.InlineButton{more})
 	}
+	clear := pendingClearAskBtn
+	clear.Text = tb.msg.ClearAllBtn
+	rows = append(rows, []tele.InlineButton{clear})
 	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 }
 
-// renderRecent returns the body text + inline keyboard for /recent. Top
-// row is the status filter chip group ([All]/[Pending]/[Discarded]); the
-// active chip is prefixed with FilterActiveMark. Each note gets a 🗑 or
-// ↩ button depending on its current status. [Show more] appended when
-// more rows exist beyond `limit` for the active filter.
-func (tb *Bot) renderRecent(ctx context.Context, filter string, limit int) (string, *tele.ReplyMarkup, error) {
-	filter = validRecentFilter(filter)
-	limit = clampPage(limit)
+// renderRecent builds the day-grouped /recent view with filter chips on
+// top. withStatus body lines only when filter is "" (all) — otherwise
+// status is redundant with the active chip.
+func (tb *Bot) renderRecent(ctx context.Context, st recentState) (string, *tele.ReplyMarkup, error) {
+	st.Filter = validRecentFilter(st.Filter)
+	st.Limit = clampPage(st.Limit)
+	st.ExpDay = validDateKey(st.ExpDay)
+
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	notes, err := tb.db.ListRecentByStatus(dbCtx, filter, limit+1)
+	notes, err := tb.db.ListRecentByStatus(dbCtx, st.Filter, st.Limit+1)
 	if err != nil {
 		return "", nil, err
 	}
-	hasMore := len(notes) > limit
+	hasMore := len(notes) > st.Limit
 	if hasMore {
-		notes = notes[:limit]
+		notes = notes[:st.Limit]
 	}
-	rows := [][]tele.InlineButton{tb.recentFilterRow(filter)}
+
+	rows := [][]tele.InlineButton{tb.recentFilterRow(st.Filter)}
 	if len(notes) == 0 {
 		return tb.msg.EmptyList, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 	}
-	body := tb.formatNotes(notes, true)
+
+	groups := tb.groupByDay(notes)
+	withStatus := st.Filter == ""
+	body := tb.renderDayGroupedBody(groups, st.ExpDay, withStatus)
+	visible, toggles := visibleNotesAndDayToggles(groups, st.ExpDay)
+
 	var actions []tele.InlineButton
-	for _, n := range notes {
+	for _, n := range visible {
 		var b tele.InlineButton
 		if n.Status == db.StatusDiscarded {
 			b = restoreRecentBtn
@@ -376,14 +624,26 @@ func (tb *Bot) renderRecent(ctx context.Context, filter string, limit int) (stri
 			b = discardRecentBtn
 			b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
 		}
-		b.Data = strconv.FormatInt(n.ID, 10)
+		b.Data = st.encodeWithID(n.ID)
 		actions = append(actions, b)
 	}
 	rows = append(rows, chunkButtons(actions, 4)...)
-	if hasMore && limit < maxListNotes {
+
+	for _, g := range toggles {
+		btn := recentDayBtn
+		btn.Text = tb.msg.DayHeader(g.label, len(g.notes))
+		newExp := g.dateKey
+		if g.dateKey == st.ExpDay {
+			newExp = ""
+		}
+		btn.Data = recentState{Filter: st.Filter, Limit: st.Limit, ExpDay: newExp}.encode()
+		rows = append(rows, []tele.InlineButton{btn})
+	}
+
+	if hasMore && st.Limit < maxListNotes {
 		more := recentMoreBtn
 		more.Text = tb.msg.ShowMoreBtn
-		more.Data = filter + ":" + strconv.Itoa(limit+recentPageSize)
+		more.Data = recentState{Filter: st.Filter, Limit: st.Limit + recentPageSize, ExpDay: st.ExpDay}.encode()
 		rows = append(rows, []tele.InlineButton{more})
 	}
 	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
@@ -400,7 +660,8 @@ func (tb *Bot) escapeFromEmpty() *tele.ReplyMarkup {
 }
 
 // recentFilterRow returns the [All][Pending][Discarded] chip row with the
-// active filter visually marked.
+// active filter visually marked. Chip taps reset the view to a fresh
+// page (limit = default, expDay = "").
 func (tb *Bot) recentFilterRow(active string) []tele.InlineButton {
 	mk := func(filter, label string) tele.InlineButton {
 		b := recentFilterBtn
@@ -409,7 +670,7 @@ func (tb *Bot) recentFilterRow(active string) []tele.InlineButton {
 		} else {
 			b.Text = label
 		}
-		b.Data = filter // empty for "all"
+		b.Data = filter
 		if filter == "" {
 			b.Data = "all"
 		}
@@ -422,16 +683,14 @@ func (tb *Bot) recentFilterRow(active string) []tele.InlineButton {
 	}
 }
 
+// --- list view: callbacks --------------------------------------------------
+
 func (tb *Bot) cbPendingMore(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
 		return nil
 	}
-	limit, err := strconv.Atoi(strings.TrimSpace(cb.Data))
-	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
-	}
-	body, kb, err := tb.renderPending(context.Background(), limit)
+	body, kb, err := tb.renderPending(context.Background(), parsePendingState(cb.Data))
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -439,30 +698,75 @@ func (tb *Bot) cbPendingMore(c tele.Context) error {
 	return c.Respond()
 }
 
-// parseRecentData decodes "filter:limit" callback payload. Returns
-// (filter, limit). Defaults to ("", recentPageSize) on parse errors.
-func parseRecentData(s string) (string, int) {
-	parts := strings.SplitN(strings.TrimSpace(s), ":", 2)
-	filter := ""
-	if len(parts) > 0 && parts[0] != "all" {
-		filter = validRecentFilter(parts[0])
-	}
-	limit := recentPageSize
-	if len(parts) == 2 {
-		if n, err := strconv.Atoi(parts[1]); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	return filter, limit
-}
-
 func (tb *Bot) cbRecentMore(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
 		return nil
 	}
-	filter, limit := parseRecentData(cb.Data)
-	body, kb, err := tb.renderRecent(context.Background(), filter, limit)
+	body, kb, err := tb.renderRecent(context.Background(), parseRecentState(cb.Data))
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbPendingDay(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	body, kb, err := tb.renderPending(context.Background(), parsePendingState(cb.Data))
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbRecentDay(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	body, kb, err := tb.renderRecent(context.Background(), parseRecentState(cb.Data))
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbPendingClearAsk(c tele.Context) error {
+	yes := pendingClearYesBtn
+	yes.Text = tb.msg.ClearAllYesBtn
+	no := pendingClearNoBtn
+	no.Text = tb.msg.ClearAllNoBtn
+	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
+	_ = c.Edit(tb.msg.ClearAllAsk, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbPendingClearYes(c tele.Context) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	n, err := tb.db.DiscardAllPending(ctx)
+	if err != nil {
+		tb.logger.Error("cb pending clear", "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("clear", err)})
+	}
+	tb.logger.Info("pending cleared", "n", n)
+	body, kb, rerr := tb.renderPending(ctx, pendingState{Limit: pendingPageSize})
+	if rerr != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", rerr)})
+	}
+	body = tb.msg.ClearAllDone(n) + "\n\n" + body
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbPendingClearNo(c tele.Context) error {
+	body, kb, err := tb.renderPending(context.Background(), pendingState{Limit: pendingPageSize})
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -480,7 +784,7 @@ func (tb *Bot) cbRecentFilter(c tele.Context) error {
 	if raw != "all" {
 		filter = validRecentFilter(raw)
 	}
-	body, kb, err := tb.renderRecent(context.Background(), filter, recentPageSize)
+	body, kb, err := tb.renderRecent(context.Background(), recentState{Filter: filter, Limit: recentPageSize})
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -521,8 +825,8 @@ func (tb *Bot) cbDiscardPending(c tele.Context) error {
 	if cb == nil {
 		return nil
 	}
-	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
-	if err != nil {
+	id, st := parsePendingStateWithID(cb.Data)
+	if id == 0 {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -531,7 +835,7 @@ func (tb *Bot) cbDiscardPending(c tele.Context) error {
 		tb.logger.Error("cb discard pending", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
 	}
-	body, kb, err := tb.renderPending(ctx, pendingPageSize)
+	body, kb, err := tb.renderPending(ctx, st)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -544,8 +848,8 @@ func (tb *Bot) cbDiscardRecent(c tele.Context) error {
 	if cb == nil {
 		return nil
 	}
-	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
-	if err != nil {
+	id, st := parseRecentStateWithID(cb.Data)
+	if id == 0 {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -554,7 +858,7 @@ func (tb *Bot) cbDiscardRecent(c tele.Context) error {
 		tb.logger.Error("cb discard recent", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
 	}
-	body, kb, err := tb.renderRecent(ctx, "", recentPageSize)
+	body, kb, err := tb.renderRecent(ctx, st)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -567,8 +871,8 @@ func (tb *Bot) cbRestoreRecent(c tele.Context) error {
 	if cb == nil {
 		return nil
 	}
-	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
-	if err != nil {
+	id, st := parseRecentStateWithID(cb.Data)
+	if id == 0 {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -577,7 +881,7 @@ func (tb *Bot) cbRestoreRecent(c tele.Context) error {
 		tb.logger.Error("cb restore recent", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("restore", err)})
 	}
-	body, kb, err := tb.renderRecent(ctx, "", recentPageSize)
+	body, kb, err := tb.renderRecent(ctx, st)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}

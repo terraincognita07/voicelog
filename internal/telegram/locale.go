@@ -53,6 +53,16 @@ type messages struct {
 	FilterDiscardedBtn  string
 	FilterActiveMark    string // prefix added to the currently active chip
 	GoDiscardedBtn      string // jump to /recent with discarded filter (for empty lists)
+
+	ClearAllBtn       string
+	ClearAllAsk       string
+	ClearAllYesBtn    string
+	ClearAllNoBtn     string
+	ClearAllDone      func(n int) string
+
+	DayToday     string
+	DayYesterday string
+	DayHeader    func(label string, count int) string // "📅 today (5)"
 }
 
 var locales = map[string]messages{
@@ -149,6 +159,16 @@ var locales = map[string]messages{
 		FilterDiscardedBtn: "Discarded",
 		FilterActiveMark:   "• ",
 		GoDiscardedBtn:     "🕘 Show discarded",
+
+		ClearAllBtn:    "🗑 Clear all",
+		ClearAllAsk:    "Discard ALL pending notes? This can be undone per-note via [Show discarded].",
+		ClearAllYesBtn: "✓ Yes, discard all",
+		ClearAllNoBtn:  "✗ Cancel",
+		ClearAllDone:   func(n int) string { return fmt.Sprintf("✓ discarded %d pending notes", n) },
+
+		DayToday:     "today",
+		DayYesterday: "yesterday",
+		DayHeader:    func(label string, count int) string { return fmt.Sprintf("📅 %s (%d)", label, count) },
 	},
 	"ru": {
 		Help: "voicelog — шли голосовое или аудио.\n\n" +
@@ -243,6 +263,16 @@ var locales = map[string]messages{
 		FilterDiscardedBtn: "Отброшенные",
 		FilterActiveMark:   "• ",
 		GoDiscardedBtn:     "🕘 Показать отброшенные",
+
+		ClearAllBtn:    "🗑 Отбросить все",
+		ClearAllAsk:    "Отбросить ВСЕ необработанные? Можно вернуть по одной через [Показать отброшенные].",
+		ClearAllYesBtn: "✓ Да, отбросить все",
+		ClearAllNoBtn:  "✗ Отмена",
+		ClearAllDone:   func(n int) string { return fmt.Sprintf("✓ отброшено %d заметок", n) },
+
+		DayToday:     "сегодня",
+		DayYesterday: "вчера",
+		DayHeader:    func(label string, count int) string { return fmt.Sprintf("📅 %s (%d)", label, count) },
 	},
 }
 

@@ -365,6 +365,50 @@ func TestRestoreNote(t *testing.T) {
 	}
 }
 
+func TestDiscardAllPending(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id1, _ := d.InsertNote(ctx, "a", 1)
+	id2, _ := d.InsertNote(ctx, "b", 1)
+	id3, _ := d.InsertNote(ctx, "c", 1)
+	// Mix the statuses: id3 → analyzed must NOT flip; id1, id2 stay pending.
+	if _, err := d.MarkAnalyzed(ctx, []int64{id3}); err != nil {
+		t.Fatalf("mark analyzed: %v", err)
+	}
+
+	n, err := d.DiscardAllPending(ctx)
+	if err != nil {
+		t.Fatalf("clear pending: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 discarded (id1, id2), got %d", n)
+	}
+
+	// id3 must still be analyzed (untouched).
+	got, _ := d.GetNote(ctx, id3)
+	if got.Status != db.StatusAnalyzed {
+		t.Fatalf("id3 must remain analyzed, got %q", got.Status)
+	}
+
+	// Re-run: no pending left.
+	n, err = d.DiscardAllPending(ctx)
+	if err != nil {
+		t.Fatalf("clear pending (idempotent): %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("second clear must flip 0 rows, got %d", n)
+	}
+
+	// id1, id2 are now discarded.
+	for _, id := range []int64{id1, id2} {
+		got, _ := d.GetNote(ctx, id)
+		if got.Status != db.StatusDiscarded {
+			t.Fatalf("id %d should be discarded, got %q", id, got.Status)
+		}
+	}
+}
+
 func TestMarkDiscarded(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
