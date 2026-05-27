@@ -28,7 +28,10 @@ an MCP server you self-host.
                                        │   list_pending_notes
                                        │   get_notes_in_range
                                        │   search_notes
+                                       │   get_note
                                        │   mark_analyzed
+                                       │   discard_notes
+                                       │   restore_note
                                        ▼
     Claude.ai ← MCP over HTTPS ── nginx ── | voicelog-mcp  |
 ```
@@ -392,6 +395,7 @@ For personal self-host these are usually acceptable. To mitigate:
 | `MCP_PORT` | no | `8081` | Port the mcp container listens on inside the host |
 | `TZ` | no | UTC | Timezone for log timestamps and bot replies |
 | `BOT_LOCALE` | no | `en` | Bot reply language: `en` or `ru`. Commands are unchanged in any locale. |
+| `WHISPER_PROMPT` | no | — | Optional whisper "initial prompt" (admin default). User-managed vocabulary (`/vocab`) is appended after this. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
 
@@ -408,22 +412,47 @@ on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
   Hard cap 500 rows per response.
 - **`search_notes(query: string, limit?: int = 20)`** —
   SQLite FTS5 MATCH. Supports bare words (AND), `"phrase"`, `term*`,
-  `term1 OR term2`. Results sorted by bm25 rank (lower = better).
+  `term1 OR term2`. Results sorted by bm25 rank (lower = better). Each hit
+  includes a `snippet` field — ~30 tokens around the match with the
+  matched term wrapped in `<<` / `>>` and elided context shown as `...`.
+- **`get_note(id: int)`** —
+  fetch one full note by id. Returns the note object or an error if the
+  id is unknown.
 - **`mark_analyzed(ids: int[])`** —
   flip status to `analyzed` for the given ids. Discarded notes are
   not touched. Returns `{updated: N}`.
+- **`discard_notes(ids: int[])`** —
+  mark the given ids as discarded (batch parity with the bot's `/delete`).
+  Already-discarded rows are ignored. Returns `{updated: N}`. Reversible
+  via `restore_note`.
+- **`restore_note(id: int)`** —
+  flip a single discarded note back to `pending`. Returns
+  `{restored: bool}` — `true` if it was discarded and got restored,
+  `false` if it exists but was not in `discarded` state.
 
 Tool schemas are visible via standard MCP `tools/list`.
 
 ## Telegram commands
 
-All replies are in Russian — easy to localise in
-`internal/telegram/bot.go`.
+Reply language is selected via `BOT_LOCALE` (`en` default, `ru` opt-in);
+commands themselves are not translated. Add more locales by appending to
+the `locales` map in `internal/telegram/locale.go`.
 
 - `/pending` — last 20 pending notes (id, time, first 80 chars)
 - `/recent` — last 10 notes regardless of status
 - `/delete <id>` — mark a note as `discarded`
+- `/vocab` — manage whisper vocabulary (names, jargon, rare terms):
+  - `/vocab` or `/vocab list` — show stored terms
+  - `/vocab add <term> [<term> ...]` — add one or more terms
+  - `/vocab del <term>` — remove one term
+  - `/vocab clear` then `/vocab clear confirm` — wipe everything
 - `/help`, `/start` — show command list
+
+Every saved-note reply ships with an inline `🗑 Discard` button — one tap
+marks the just-recorded note as `discarded` without typing `/delete <id>`.
+
+The whisper "initial prompt" sent with each transcription is composed as
+`WHISPER_PROMPT` (env, admin-default) followed by the `/vocab` terms.
 
 ## Development
 

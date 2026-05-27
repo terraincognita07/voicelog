@@ -28,7 +28,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	locale := os.Getenv("BOT_LOCALE") // empty falls back to "en" inside telegram.New
+	locale := os.Getenv("BOT_LOCALE")        // empty falls back to "en" inside telegram.New
+	basePrompt := os.Getenv("WHISPER_PROMPT") // optional whisper "initial prompt"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -47,7 +48,7 @@ func main() {
 
 	w := whisper.New(whisperURL)
 
-	bot, err := telegram.New(token, locale, allowedUser, store, w, logger)
+	bot, err := telegram.New(token, locale, basePrompt, allowedUser, store, w, logger)
 	if err != nil {
 		logger.Error("init bot", "err", err)
 		os.Exit(1)
@@ -58,7 +59,8 @@ func main() {
 		"allowed_user", allowedUser,
 		"db", dbPath,
 		"whisper_url", whisperURL,
-		"locale", locale)
+		"locale", locale,
+		"base_prompt_len", len(basePrompt))
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

@@ -160,6 +160,9 @@ func TestSearchNotes(t *testing.T) {
 	if hits[0].Rank == 0 {
 		t.Fatalf("rank should be non-zero (bm25 returns negative-ish floats)")
 	}
+	if !strings.Contains(hits[0].Snippet, "<<voicelog>>") {
+		t.Fatalf("snippet should wrap matched term in << >>, got %q", hits[0].Snippet)
+	}
 
 	_, err = d.SearchNotes(ctx, "", 10)
 	if err == nil {
@@ -200,6 +203,92 @@ func TestMarkAnalyzed(t *testing.T) {
 	n, err = d.MarkAnalyzed(ctx, nil)
 	if err != nil || n != 0 {
 		t.Fatalf("empty ids: n=%d err=%v", n, err)
+	}
+}
+
+func TestGetNote(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, err := d.InsertNote(ctx, "hello world", 4)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	n, err := d.GetNote(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if n.ID != id || n.RawText != "hello world" || n.DurationSec.Int64 != 4 {
+		t.Fatalf("unexpected note: %+v", n)
+	}
+	if n.Status != db.StatusPending {
+		t.Fatalf("want pending, got %q", n.Status)
+	}
+
+	if _, err := d.GetNote(ctx, 99999); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound, got %v", err)
+	}
+}
+
+func TestDiscardNotes(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id1, _ := d.InsertNote(ctx, "a", 1)
+	id2, _ := d.InsertNote(ctx, "b", 1)
+	id3, _ := d.InsertNote(ctx, "c", 1)
+	// id3 already discarded.
+	if err := d.MarkDiscarded(ctx, id3); err != nil {
+		t.Fatalf("seed discard: %v", err)
+	}
+
+	n, err := d.DiscardNotes(ctx, []int64{id1, id2, id3, 99999})
+	if err != nil {
+		t.Fatalf("discard notes: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("want 2 flipped (id3 already discarded, 99999 missing), got %d", n)
+	}
+
+	if pending, _ := d.CountPending(ctx); pending != 0 {
+		t.Fatalf("expected 0 pending after mass discard, got %d", pending)
+	}
+
+	// Empty ids → no-op.
+	if n, err := d.DiscardNotes(ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty ids: n=%d err=%v", n, err)
+	}
+}
+
+func TestRestoreNote(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	id, _ := d.InsertNote(ctx, "to restore", 1)
+	if err := d.MarkDiscarded(ctx, id); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+
+	ok, err := d.RestoreNote(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("restore: ok=%v err=%v", ok, err)
+	}
+	got, _ := d.GetNote(ctx, id)
+	if got.Status != db.StatusPending {
+		t.Fatalf("want pending after restore, got %q", got.Status)
+	}
+
+	// Restoring a non-discarded note → (false, nil).
+	ok, err = d.RestoreNote(ctx, id)
+	if err != nil || ok {
+		t.Fatalf("restore non-discarded: ok=%v err=%v", ok, err)
+	}
+
+	// Unknown id → ErrNoteNotFound.
+	_, err = d.RestoreNote(ctx, 99999)
+	if !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound, got %v", err)
 	}
 }
 

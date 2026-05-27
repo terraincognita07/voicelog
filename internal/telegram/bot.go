@@ -18,17 +18,20 @@ import (
 )
 
 type Bot struct {
-	bot         *tele.Bot
-	db          *db.DB
-	whisper     *whisper.Client
-	allowedUser int64
-	logger      *slog.Logger
-	msg         messages
+	bot          *tele.Bot
+	db           *db.DB
+	whisper      *whisper.Client
+	allowedUser  int64
+	logger       *slog.Logger
+	msg          messages
+	basePrompt   string
 }
 
 // New creates a Bot. locale is "en" or "ru" (or any other key in the
 // locales map). An empty or unknown locale falls back to "en".
-func New(token, locale string, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
+// basePrompt is the admin-default whisper prompt (env WHISPER_PROMPT) —
+// vocabulary terms are appended at transcribe time.
+func New(token, locale, basePrompt string, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -43,6 +46,7 @@ func New(token, locale string, allowedUser int64, store *db.DB, w *whisper.Clien
 		allowedUser: allowedUser,
 		logger:      logger,
 		msg:         pickLocale(locale),
+		basePrompt:  strings.TrimSpace(basePrompt),
 	}
 	tb.registerHandlers()
 	return tb, nil
@@ -50,6 +54,10 @@ func New(token, locale string, allowedUser int64, store *db.DB, w *whisper.Clien
 
 func (tb *Bot) Start() { tb.bot.Start() }
 func (tb *Bot) Stop()  { tb.bot.Stop() }
+
+// discardBtn is the prototype inline button used to route callbacks. Its
+// Unique field is the routing key; per-message Data carries the note ID.
+var discardBtn = tele.InlineButton{Unique: "discard"}
 
 func (tb *Bot) registerHandlers() {
 	tb.bot.Use(tb.allowOnly())
@@ -61,6 +69,8 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle("/delete", tb.cmdDelete)
 	tb.bot.Handle("/start", tb.cmdHelp)
 	tb.bot.Handle("/help", tb.cmdHelp)
+	tb.bot.Handle("/vocab", tb.cmdVocab)
+	tb.bot.Handle(&discardBtn, tb.cbDiscard)
 }
 
 func (tb *Bot) allowOnly() tele.MiddlewareFunc {
@@ -108,8 +118,9 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 		return tb.errReply(c, "download from telegram", err)
 	}
 
-	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration)
-	text, err := tb.whisper.Transcribe(ctx, srcPath)
+	prompt := tb.composePrompt(ctx)
+	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration, "prompt_len", len(prompt))
+	text, err := tb.whisper.Transcribe(ctx, srcPath, prompt)
 	if err != nil {
 		return tb.errReply(c, "whisper", err)
 	}
@@ -124,7 +135,40 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 
 	pending, _ := tb.db.CountPending(ctx)
-	return c.Send(tb.msg.Recorded(id, pending))
+	return c.Send(tb.msg.Recorded(id, pending), tb.discardMarkup(id))
+}
+
+// discardMarkup builds a one-button inline keyboard tied to a specific note.
+func (tb *Bot) discardMarkup(id int64) *tele.ReplyMarkup {
+	btn := discardBtn
+	btn.Text = tb.msg.DiscardBtn
+	btn.Data = strconv.FormatInt(id, 10)
+	return &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{btn}}}
+}
+
+// cbDiscard handles the inline [🗑 Discard] press attached to a saved-note
+// reply. Telegram callback data is the bare note ID.
+func (tb *Bot) cbDiscard(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := tb.db.MarkDiscarded(ctx, id); err != nil {
+		if errors.Is(err, db.ErrNoteNotFound) {
+			_ = c.Edit(tb.msg.NotFound(id))
+			return c.Respond()
+		}
+		tb.logger.Error("callback discard", "id", id, "err", err)
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+	}
+	_ = c.Edit(tb.msg.DiscardedReply(id))
+	return c.Respond()
 }
 
 func (tb *Bot) errReply(c tele.Context, label string, err error) error {
@@ -170,6 +214,83 @@ func (tb *Bot) cmdDelete(c tele.Context) error {
 		return tb.errReply(c, "mark discarded", err)
 	}
 	return c.Send(tb.msg.Discarded(id))
+}
+
+// composePrompt builds the whisper "initial prompt" as
+//   basePrompt + " " + vocabulary terms
+// Falls back gracefully on DB error — base prompt alone is better than
+// failing the transcription.
+func (tb *Bot) composePrompt(ctx context.Context) string {
+	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	vocab, err := tb.db.VocabPrompt(dbCtx)
+	if err != nil {
+		tb.logger.Warn("vocab prompt", "err", err)
+		return tb.basePrompt
+	}
+	switch {
+	case tb.basePrompt == "" && vocab == "":
+		return ""
+	case tb.basePrompt == "":
+		return vocab
+	case vocab == "":
+		return tb.basePrompt
+	default:
+		return tb.basePrompt + " " + vocab
+	}
+}
+
+func (tb *Bot) cmdVocab(c tele.Context) error {
+	args := strings.Fields(c.Message().Payload)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if len(args) == 0 || args[0] == "list" {
+		terms, err := tb.db.ListVocab(ctx)
+		if err != nil {
+			return tb.errReply(c, "vocab list", err)
+		}
+		return c.Send(tb.msg.VocabList(terms))
+	}
+
+	switch args[0] {
+	case "add":
+		if len(args) < 2 {
+			return c.Send(tb.msg.VocabUsage)
+		}
+		added := 0
+		for _, term := range args[1:] {
+			ok, err := tb.db.AddVocab(ctx, term)
+			if err != nil {
+				return tb.errReply(c, "vocab add", err)
+			}
+			if ok {
+				added++
+			}
+		}
+		return c.Send(tb.msg.VocabAdded(added, len(args)-1))
+	case "del", "rm", "remove":
+		if len(args) != 2 {
+			return c.Send(tb.msg.VocabUsage)
+		}
+		ok, err := tb.db.RemoveVocab(ctx, args[1])
+		if err != nil {
+			return tb.errReply(c, "vocab del", err)
+		}
+		return c.Send(tb.msg.VocabRemoved(args[1], ok))
+	case "clear":
+		// Two-step: require `clear confirm` to actually wipe.
+		if len(args) != 2 || args[1] != "confirm" {
+			return c.Send(tb.msg.VocabClearAsk)
+		}
+		n, err := tb.db.ClearVocab(ctx)
+		if err != nil {
+			return tb.errReply(c, "vocab clear", err)
+		}
+		return c.Send(tb.msg.VocabCleared(n))
+	default:
+		return c.Send(tb.msg.VocabUsage)
+	}
 }
 
 func (tb *Bot) formatNotes(notes []db.Note, withStatus bool) string {

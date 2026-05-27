@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -25,6 +26,7 @@ type mcpNote struct {
 	DurationSec  int64   `json:"duration_sec"`
 	Status       string  `json:"status,omitempty"`
 	Rank         float64 `json:"rank,omitempty"`
+	Snippet      string  `json:"snippet,omitempty"`
 }
 
 func toMCP(n db.Note) mcpNote {
@@ -47,6 +49,9 @@ func NewServer(store *db.DB, logger *slog.Logger) *server.MCPServer {
 	registerGetRange(s, store, logger)
 	registerSearch(s, store, logger)
 	registerMarkAnalyzed(s, store, logger)
+	registerGetNote(s, store, logger)
+	registerDiscardNotes(s, store, logger)
+	registerRestoreNote(s, store, logger)
 
 	return s
 }
@@ -149,7 +154,10 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 	tool := mcpsdk.NewTool("search_notes",
 		mcpsdk.WithDescription("Full-text search over note transcriptions using SQLite FTS5. "+
 			"Query supports the FTS5 syntax: bare words (AND), \"phrase\", term*, term1 OR term2. "+
-			"Results sorted by bm25 rank (lower is better)."),
+			"Results sorted by bm25 rank (lower is better). Each hit includes a 'snippet' "+
+			"field — ~30 tokens around the match with the matched term wrapped in << >> "+
+			"and elided context shown as '...'. Use 'snippet' for dense context; 'raw_text' "+
+			"still carries the full note."),
 		mcpsdk.WithReadOnlyHintAnnotation(true),
 		mcpsdk.WithDestructiveHintAnnotation(false),
 		mcpsdk.WithIdempotentHintAnnotation(true),
@@ -181,6 +189,7 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		for i, h := range hits {
 			m := toMCP(h.Note)
 			m.Rank = h.Rank
+			m.Snippet = h.Snippet
 			out[i] = m
 		}
 		return jsonResult(out)
@@ -214,6 +223,103 @@ func registerMarkAnalyzed(s *server.MCPServer, store *db.DB, logger *slog.Logger
 			return mcpsdk.NewToolResultError(err.Error()), nil
 		}
 		return jsonResult(map[string]int{"updated": n})
+	})
+}
+
+func registerGetNote(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("get_note",
+		mcpsdk.WithDescription("Fetch a single note by its ID. Returns the full note object "+
+			"(including raw_text and current status). Use when you need full context for one "+
+			"hit from search_notes."),
+		mcpsdk.WithReadOnlyHintAnnotation(true),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithNumber("id", mcpsdk.Required(),
+			mcpsdk.Description("Note ID."),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		idF, err := req.RequireFloat("id")
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		n, err := store.GetNote(ctx, int64(idF))
+		if err != nil {
+			if errors.Is(err, db.ErrNoteNotFound) {
+				return mcpsdk.NewToolResultError(fmt.Sprintf("note %d not found", int64(idF))), nil
+			}
+			logger.Error("get_note", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(toMCP(n))
+	})
+}
+
+func registerDiscardNotes(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("discard_notes",
+		mcpsdk.WithDescription("Mark the given note ids as discarded. Mirrors the bot's "+
+			"/delete command but accepts a batch. Already-discarded rows are ignored. "+
+			"Returns {updated: N} — the count of rows actually flipped. Reversible via restore_note."),
+		mcpsdk.WithReadOnlyHintAnnotation(false),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithArray("ids", mcpsdk.Required(),
+			mcpsdk.Description("List of note ids."),
+			mcpsdk.Items(map[string]any{"type": "integer"}),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		raw := req.GetArguments()["ids"]
+		ids, err := toInt64Slice(raw)
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		n, err := store.DiscardNotes(ctx, ids)
+		if err != nil {
+			logger.Error("discard_notes", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(map[string]int{"updated": n})
+	})
+}
+
+func registerRestoreNote(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
+	tool := mcpsdk.NewTool("restore_note",
+		mcpsdk.WithDescription("Restore a discarded note back to pending. Only acts on "+
+			"notes whose current status is 'discarded'. Returns {restored: bool} — true if "+
+			"the note was discarded and got flipped, false if it exists but was not "+
+			"discarded. Errors if the id is unknown."),
+		mcpsdk.WithReadOnlyHintAnnotation(false),
+		mcpsdk.WithDestructiveHintAnnotation(false),
+		mcpsdk.WithIdempotentHintAnnotation(true),
+		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithNumber("id", mcpsdk.Required(),
+			mcpsdk.Description("Note ID to restore."),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		idF, err := req.RequireFloat("id")
+		if err != nil {
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		id := int64(idF)
+		ok, err := store.RestoreNote(ctx, id)
+		if err != nil {
+			if errors.Is(err, db.ErrNoteNotFound) {
+				return mcpsdk.NewToolResultError(fmt.Sprintf("note %d not found", id)), nil
+			}
+			logger.Error("restore_note", "err", err)
+			return mcpsdk.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(map[string]bool{"restored": ok})
 	})
 }
 

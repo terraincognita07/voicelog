@@ -35,6 +35,30 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.Error == nil || m.Error("x", errors.New("y")) == "" {
 				t.Error("Error missing or returns empty")
 			}
+			if m.DiscardBtn == "" {
+				t.Error("DiscardBtn is empty")
+			}
+			if m.DiscardedReply == nil || m.DiscardedReply(1) == "" {
+				t.Error("DiscardedReply missing or returns empty")
+			}
+			if m.VocabUsage == "" {
+				t.Error("VocabUsage is empty")
+			}
+			if m.VocabList == nil || m.VocabList(nil) == "" || m.VocabList([]string{"a"}) == "" {
+				t.Error("VocabList missing or returns empty")
+			}
+			if m.VocabAdded == nil || m.VocabAdded(1, 1) == "" || m.VocabAdded(1, 3) == "" {
+				t.Error("VocabAdded missing or returns empty")
+			}
+			if m.VocabRemoved == nil || m.VocabRemoved("x", true) == "" || m.VocabRemoved("x", false) == "" {
+				t.Error("VocabRemoved missing or returns empty")
+			}
+			if m.VocabClearAsk == "" {
+				t.Error("VocabClearAsk is empty")
+			}
+			if m.VocabCleared == nil || m.VocabCleared(3) == "" {
+				t.Error("VocabCleared missing or returns empty")
+			}
 		})
 	}
 }

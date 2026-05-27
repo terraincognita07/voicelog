@@ -77,7 +77,8 @@ func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
 
 type NoteWithRank struct {
 	Note
-	Rank float64
+	Rank    float64
+	Snippet string
 }
 
 // MaxNotesInRange caps GetNotesInRange to prevent unbounded result sets
@@ -115,7 +116,9 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteW
 		return nil, errors.New("empty query")
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status, bm25(notes_fts) AS rank
+		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status,
+		       bm25(notes_fts) AS rank,
+		       snippet(notes_fts, 0, '<<', '>>', '...', 30) AS snip
 		FROM notes_fts
 		JOIN notes n ON n.id = notes_fts.rowid
 		WHERE notes_fts MATCH ?
@@ -130,7 +133,7 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteW
 		var nr NoteWithRank
 		var ts int64
 		var status string
-		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status, &nr.Rank); err != nil {
+		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status, &nr.Rank, &nr.Snippet); err != nil {
 			return nil, err
 		}
 		nr.CreatedAt = time.Unix(ts, 0)
@@ -138,6 +141,71 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteW
 		out = append(out, nr)
 	}
 	return out, rows.Err()
+}
+
+// GetNote fetches a single note by ID. Returns ErrNoteNotFound if absent.
+func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
+	var n Note
+	var ts int64
+	var status string
+	err := db.QueryRowContext(ctx, `
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		FROM notes
+		WHERE id = ?`, id).Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Note{}, ErrNoteNotFound
+	}
+	if err != nil {
+		return Note{}, err
+	}
+	n.CreatedAt = time.Unix(ts, 0)
+	n.Status = Status(status)
+	return n, nil
+}
+
+// DiscardNotes marks multiple notes as discarded. Already-discarded rows are
+// not double-counted. Returns the number of rows actually flipped.
+func (db *DB) DiscardNotes(ctx context.Context, ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	q := fmt.Sprintf(`UPDATE notes SET status = 'discarded' WHERE status != 'discarded' AND id IN (%s)`, placeholders)
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	res, err := db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// RestoreNote flips a discarded note back to pending. Returns (true, nil) if
+// the note was discarded and got restored; (false, nil) if it exists but was
+// not in discarded state; ErrNoteNotFound if the id is unknown.
+func (db *DB) RestoreNote(ctx context.Context, id int64) (bool, error) {
+	res, err := db.ExecContext(ctx,
+		`UPDATE notes SET status = 'pending' WHERE id = ? AND status = 'discarded'`, id)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	// Distinguish "exists but not discarded" from "doesn't exist at all".
+	var dummy int64
+	err = db.QueryRowContext(ctx, `SELECT id FROM notes WHERE id = ?`, id).Scan(&dummy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNoteNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // MarkAnalyzed flips status from anything-but-discarded to 'analyzed' for the

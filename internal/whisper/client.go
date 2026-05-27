@@ -31,14 +31,16 @@ type Result struct {
 }
 
 // Transcribe converts srcPath (any ffmpeg-supported audio) to 16 kHz mono WAV,
-// POSTs it to /inference, and returns the transcribed text.
-func (c *Client) Transcribe(ctx context.Context, srcPath string) (string, error) {
+// POSTs it to /inference, and returns the transcribed text. prompt is the
+// optional whisper "initial prompt" — a free-form hint string (names,
+// jargon) that biases the decoder. Empty prompt = no hint.
+func (c *Client) Transcribe(ctx context.Context, srcPath, prompt string) (string, error) {
 	wavPath := srcPath + ".wav"
 	if err := toWAV(ctx, srcPath, wavPath); err != nil {
 		return "", fmt.Errorf("ffmpeg convert: %w", err)
 	}
 	defer os.Remove(wavPath)
-	return c.transcribeWAV(ctx, wavPath)
+	return c.transcribeWAV(ctx, wavPath, prompt)
 }
 
 func toWAV(ctx context.Context, src, dst string) error {
@@ -54,7 +56,7 @@ func toWAV(ctx context.Context, src, dst string) error {
 	return nil
 }
 
-func (c *Client) transcribeWAV(ctx context.Context, path string) (string, error) {
+func (c *Client) transcribeWAV(ctx context.Context, path, prompt string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("open wav: %w", err)
@@ -72,6 +74,11 @@ func (c *Client) transcribeWAV(ctx context.Context, path string) (string, error)
 	}
 	if err := mw.WriteField("response_format", "json"); err != nil {
 		return "", err
+	}
+	if prompt != "" {
+		if err := mw.WriteField("prompt", prompt); err != nil {
+			return "", err
+		}
 	}
 	if err := mw.Close(); err != nil {
 		return "", err
