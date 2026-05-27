@@ -40,6 +40,16 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   presence/absence in multipart, HTTP error propagation, malformed
   JSON body, missing wav file. Outer `Transcribe` (with its ffmpeg
   pre-step) still depends on a real ffmpeg binary at test time.
+- **`internal/mcp` integration tests** — 15 tests against a live
+  `httptest.NewServer(mcp.BearerAuth(token, mcpHTTP))`. Cover bearer
+  auth (missing / wrong / correct + WWW-Authenticate echo) plus a
+  happy path for every tool: list_pending_notes, get_notes_in_range,
+  search_notes, get_note (found + not_found), mark_analyzed,
+  discard_notes, restore_note (discarded→pending + analyzed-not-
+  restorable), retranscribe (unavailable when Whisper is nil),
+  db_health. As prep, `bearerAuth` moved from `cmd/mcp/main.go` to
+  `internal/mcp/auth.go` (exported as `BearerAuth`) so the test
+  exercises the same wrapper that ships in production.
 
 ### Fixed
 

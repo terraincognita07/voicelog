@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -79,7 +78,7 @@ func main() {
 	addr := ":" + port
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           bearerAuth(token, mcpHTTP),
+		Handler:           mcp.BearerAuth(token, mcpHTTP),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -118,20 +117,5 @@ func main() {
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown", "err", err)
 	}
-}
-
-// bearerAuth requires every request to carry "Authorization: Bearer <token>".
-// Constant-time comparison defeats timing oracles on token prefixes.
-func bearerAuth(token string, next http.Handler) http.Handler {
-	expected := []byte("Bearer " + token)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, expected) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="voicelog"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
