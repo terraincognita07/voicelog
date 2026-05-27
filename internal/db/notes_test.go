@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"voicelog/internal/db"
+	"voicelog/migrations"
 )
 
 func TestInsertAndList(t *testing.T) {
@@ -362,6 +363,70 @@ func TestRestoreNote(t *testing.T) {
 	_, err = d.RestoreNote(ctx, 99999)
 	if !errors.Is(err, db.ErrNoteNotFound) {
 		t.Fatalf("want ErrNoteNotFound, got %v", err)
+	}
+}
+
+func TestInsertNoteWithMeta(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Without meta → all confidence/suspect columns are NULL/0.
+	id1, err := d.InsertNote(ctx, "no meta", 5)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got1, _ := d.GetNote(ctx, id1)
+	if got1.ConfidenceOverall.Valid || got1.ConfidenceMin.Valid {
+		t.Errorf("confidence should be NULL for note without meta: %+v", got1)
+	}
+	if got1.SuspectHallucination {
+		t.Errorf("suspect should default to false")
+	}
+
+	// With meta → values round-trip.
+	overall, worst := -0.42, -0.91
+	id2, err := d.InsertNoteWithMeta(ctx, "with meta", 7, db.NoteMeta{
+		ConfidenceOverall:    &overall,
+		ConfidenceMin:        &worst,
+		SuspectHallucination: true,
+	})
+	if err != nil {
+		t.Fatalf("insert w/ meta: %v", err)
+	}
+	got2, _ := d.GetNote(ctx, id2)
+	if !got2.ConfidenceOverall.Valid || got2.ConfidenceOverall.Float64 != overall {
+		t.Errorf("confidence_overall round-trip failed: %+v", got2.ConfidenceOverall)
+	}
+	if !got2.ConfidenceMin.Valid || got2.ConfidenceMin.Float64 != worst {
+		t.Errorf("confidence_min round-trip failed: %+v", got2.ConfidenceMin)
+	}
+	if !got2.SuspectHallucination {
+		t.Errorf("suspect should be true")
+	}
+}
+
+func TestMigrateIsTracked(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Re-applying Migrate must be a no-op (and especially must not fail
+	// on ALTER ADD COLUMN in 003).
+	if err := d.Migrate(ctx, migrations.FS); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if err := d.Migrate(ctx, migrations.FS); err != nil {
+		t.Fatalf("third migrate: %v", err)
+	}
+
+	// schema_migrations table must record at least the known names.
+	var count int
+	if err := d.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_migrations WHERE name IN ('001_init.sql', '002_vocab.sql', '003_confidence.sql')`).
+		Scan(&count); err != nil {
+		t.Fatalf("count migrations: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("want 3 tracked migrations, got %d", count)
 	}
 }
 

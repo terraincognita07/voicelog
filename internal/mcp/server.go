@@ -20,23 +20,36 @@ const (
 )
 
 type mcpNote struct {
-	ID           int64   `json:"id"`
-	CreatedAtISO string  `json:"created_at_iso"`
-	RawText      string  `json:"raw_text"`
-	DurationSec  int64   `json:"duration_sec"`
-	Status       string  `json:"status,omitempty"`
-	Rank         float64 `json:"rank,omitempty"`
-	Snippet      string  `json:"snippet,omitempty"`
+	ID                   int64    `json:"id"`
+	CreatedAtISO         string   `json:"created_at_iso"`
+	RawText              string   `json:"raw_text"`
+	DurationSec          int64    `json:"duration_sec"`
+	Status               string   `json:"status,omitempty"`
+	Rank                 float64  `json:"rank,omitempty"`
+	Snippet              string   `json:"snippet,omitempty"`
+	ConfidenceOverall    *float64 `json:"confidence_overall,omitempty"` // mean avg_logprob; nil = unknown
+	ConfidenceMin        *float64 `json:"confidence_min,omitempty"`     // worst segment avg_logprob
+	SuspectHallucination bool     `json:"suspect_hallucination,omitempty"`
 }
 
 func toMCP(n db.Note) mcpNote {
-	return mcpNote{
-		ID:           n.ID,
-		CreatedAtISO: n.CreatedAt.UTC().Format(time.RFC3339),
-		RawText:      n.RawText,
-		DurationSec:  n.DurationSec.Int64,
-		Status:       string(n.Status),
+	out := mcpNote{
+		ID:                   n.ID,
+		CreatedAtISO:         n.CreatedAt.UTC().Format(time.RFC3339),
+		RawText:              n.RawText,
+		DurationSec:          n.DurationSec.Int64,
+		Status:               string(n.Status),
+		SuspectHallucination: n.SuspectHallucination,
 	}
+	if n.ConfidenceOverall.Valid {
+		v := n.ConfidenceOverall.Float64
+		out.ConfidenceOverall = &v
+	}
+	if n.ConfidenceMin.Valid {
+		v := n.ConfidenceMin.Float64
+		out.ConfidenceMin = &v
+	}
+	return out
 }
 
 // NewServer builds the MCP server and registers all four voicelog tools.

@@ -20,15 +20,16 @@ import (
 )
 
 type Bot struct {
-	bot           *tele.Bot
-	db            *db.DB
-	whisper       *whisper.Client
-	allowedUser   int64
-	logger        *slog.Logger
-	msg           messages
-	basePrompt    string
-	audioDir      string // persistent audio storage; "" = retention disabled
-	audioRetainOn bool   // memoizes audioDir != "" for processFile
+	bot                  *tele.Bot
+	db                   *db.DB
+	whisper              *whisper.Client
+	allowedUser          int64
+	logger               *slog.Logger
+	msg                  messages
+	basePrompt           string
+	audioDir             string  // persistent audio storage; "" = retention disabled
+	audioRetainOn        bool    // memoizes audioDir != "" for processFile
+	hallucinationThresh  float64 // no_speech_prob > thresh → suspect; default 0.6
 
 	mainMenu       *tele.ReplyMarkup
 	btnMenuPending *tele.Btn
@@ -49,12 +50,18 @@ const rejectLogWindow = 15 * time.Minute
 
 // Config bundles the optional knobs that don't fit cleanly into the
 // positional New() signature. Zero value = defaults (no audio retention,
-// no base whisper prompt, en locale).
+// no base whisper prompt, en locale, default hallucination threshold).
 type Config struct {
-	Locale     string // "en" / "ru" / fallback "en"
-	BasePrompt string // WHISPER_PROMPT env
-	AudioDir   string // "" disables audio retention
+	Locale              string  // "en" / "ru" / fallback "en"
+	BasePrompt          string  // WHISPER_PROMPT env
+	AudioDir            string  // "" disables audio retention
+	HallucinationThresh float64 // no_speech_prob threshold; 0 → default 0.6
 }
+
+// defaultHallucinationThresh is whisper.cpp's conventional cutoff for
+// "this segment is probably not speech". 0.6 catches obvious silence/
+// music while still tolerating quiet voice.
+const defaultHallucinationThresh = 0.6
 
 // New creates a Bot. locale is "en" or "ru" (or any other key in the
 // locales map). An empty or unknown locale falls back to "en".
@@ -70,17 +77,22 @@ func New(token string, cfg Config, allowedUser int64, store *db.DB, w *whisper.C
 	if err != nil {
 		return nil, fmt.Errorf("init telebot: %w", err)
 	}
+	thresh := cfg.HallucinationThresh
+	if thresh <= 0 {
+		thresh = defaultHallucinationThresh
+	}
 	tb := &Bot{
-		bot:           b,
-		db:            store,
-		whisper:       w,
-		allowedUser:   allowedUser,
-		logger:        logger,
-		msg:           pickLocale(cfg.Locale),
-		basePrompt:    strings.TrimSpace(cfg.BasePrompt),
-		audioDir:      strings.TrimSpace(cfg.AudioDir),
-		audioRetainOn: strings.TrimSpace(cfg.AudioDir) != "",
-		rejectLog:     make(map[int64]time.Time),
+		bot:                 b,
+		db:                  store,
+		whisper:             w,
+		allowedUser:         allowedUser,
+		logger:              logger,
+		msg:                 pickLocale(cfg.Locale),
+		basePrompt:          strings.TrimSpace(cfg.BasePrompt),
+		audioDir:            strings.TrimSpace(cfg.AudioDir),
+		audioRetainOn:       strings.TrimSpace(cfg.AudioDir) != "",
+		hallucinationThresh: thresh,
+		rejectLog:           make(map[int64]time.Time),
 	}
 	tb.buildMenu()
 	tb.registerHandlers()
@@ -239,16 +251,24 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	prompt := tb.composePrompt(ctx)
 	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration, "prompt_len", len(prompt))
 	_ = c.Notify(tele.Typing) // refresh the indicator before the long call
-	text, err := tb.whisper.Transcribe(ctx, srcPath, prompt)
+	result, err := tb.whisper.Transcribe(ctx, srcPath, prompt)
 	if err != nil {
 		return tb.errReply(c, "whisper", err)
 	}
-	text = strings.TrimSpace(text)
+	text := strings.TrimSpace(result.Text)
 	if text == "" {
 		return c.Send(tb.msg.EmptyTrans)
 	}
 
-	id, err := tb.db.InsertNote(ctx, text, duration)
+	// Derive quality signals. Missing segments → store NULL.
+	meta := db.NoteMeta{}
+	overall, worst, suspect, ok := result.Aggregate(tb.hallucinationThresh)
+	if ok {
+		meta.ConfidenceOverall = &overall
+		meta.ConfidenceMin = &worst
+		meta.SuspectHallucination = suspect
+	}
+	id, err := tb.db.InsertNoteWithMeta(ctx, text, duration, meta)
 	if err != nil {
 		return tb.errReply(c, "insert note", err)
 	}
@@ -269,7 +289,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	pending, _ := tb.db.CountPending(ctx)
 	preview := previewText(text, savedPreviewLen)
 	truncated := len([]rune(strings.ReplaceAll(text, "\n", " "))) > savedPreviewLen
-	return c.Send(tb.msg.Recorded(id, duration, pending, preview), tb.discardMarkup(id, truncated))
+	return c.Send(tb.msg.Recorded(id, duration, pending, preview, meta.SuspectHallucination), tb.discardMarkup(id, truncated))
 }
 
 // previewText returns a single-line, run-length-capped preview suitable

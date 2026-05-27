@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,8 +55,14 @@ func TestLocalesAreComplete(t *testing.T) {
 			}
 
 			// Functions that take args and must return non-empty.
-			if m.Recorded == nil || m.Recorded(1, 12, 3, "hello") == "" || m.Recorded(1, 0, 0, "") == "" {
+			if m.Recorded == nil ||
+				m.Recorded(1, 12, 3, "hello", false) == "" ||
+				m.Recorded(1, 0, 0, "", false) == "" ||
+				m.Recorded(1, 5, 0, "hi", true) == "" {
 				t.Error("Recorded missing or returns empty")
+			}
+			if !strings.Contains(m.Recorded(1, 5, 0, "hi", true), "⚠") {
+				t.Errorf("Recorded(...suspect=true) must include the warning emoji; got %q", m.Recorded(1, 5, 0, "hi", true))
 			}
 			if m.NotFound == nil || m.NotFound(1) == "" {
 				t.Error("NotFound missing or returns empty")

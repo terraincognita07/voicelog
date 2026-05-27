@@ -18,20 +18,55 @@ const (
 )
 
 type Note struct {
-	ID          int64
-	CreatedAt   time.Time
-	RawText     string
-	DurationSec sql.NullInt64
-	AudioPath   sql.NullString
-	Status      Status
+	ID                   int64
+	CreatedAt            time.Time
+	RawText              string
+	DurationSec          sql.NullInt64
+	AudioPath            sql.NullString
+	Status               Status
+	ConfidenceOverall    sql.NullFloat64
+	ConfidenceMin        sql.NullFloat64
+	SuspectHallucination bool
+}
+
+// NoteMeta carries optional transcription-quality signals computed from
+// whisper's verbose_json response. All three are pointers so the caller
+// can explicitly omit them (= store NULL) for the "old whisper" or
+// "no segments" case — distinct from a real 0.0 confidence.
+type NoteMeta struct {
+	ConfidenceOverall    *float64
+	ConfidenceMin        *float64
+	SuspectHallucination bool
 }
 
 var ErrNoteNotFound = errors.New("note not found")
 
+// InsertNote inserts a note without any quality metadata — older
+// callsites and tests that don't have segment info should use this
+// path. The confidence_* columns stay NULL and suspect_hallucination is 0.
 func (db *DB) InsertNote(ctx context.Context, rawText string, durationSec int) (int64, error) {
-	res, err := db.ExecContext(ctx,
-		`INSERT INTO notes (created_at, raw_text, duration_sec) VALUES (?, ?, ?)`,
-		time.Now().Unix(), rawText, durationSec)
+	return db.InsertNoteWithMeta(ctx, rawText, durationSec, NoteMeta{})
+}
+
+// InsertNoteWithMeta inserts a note alongside its quality signals.
+// Nil pointer fields are stored as NULL — distinct from a real 0.0.
+func (db *DB) InsertNoteWithMeta(ctx context.Context, rawText string, durationSec int, meta NoteMeta) (int64, error) {
+	var overall, worst any
+	if meta.ConfidenceOverall != nil {
+		overall = *meta.ConfidenceOverall
+	}
+	if meta.ConfidenceMin != nil {
+		worst = *meta.ConfidenceMin
+	}
+	suspect := 0
+	if meta.SuspectHallucination {
+		suspect = 1
+	}
+	res, err := db.ExecContext(ctx, `
+		INSERT INTO notes (created_at, raw_text, duration_sec,
+		                   confidence_overall, confidence_min, suspect_hallucination)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), rawText, durationSec, overall, worst, suspect)
 	if err != nil {
 		return 0, err
 	}
@@ -47,7 +82,8 @@ func (db *DB) CountPending(ctx context.Context) (int, error) {
 
 func (db *DB) ListPending(ctx context.Context, limit int) ([]Note, error) {
 	return queryNotes(ctx, db, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
 		WHERE status = 'pending'
 		ORDER BY created_at DESC, id DESC
@@ -56,7 +92,8 @@ func (db *DB) ListPending(ctx context.Context, limit int) ([]Note, error) {
 
 func (db *DB) ListRecent(ctx context.Context, limit int) ([]Note, error) {
 	return queryNotes(ctx, db, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
 		ORDER BY created_at DESC, id DESC
 		LIMIT ?`, limit)
@@ -69,7 +106,8 @@ func (db *DB) ListRecentByStatus(ctx context.Context, status string, limit int) 
 		return db.ListRecent(ctx, limit)
 	}
 	return queryNotes(ctx, db, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
 		WHERE status = ?
 		ORDER BY created_at DESC, id DESC
@@ -123,7 +161,8 @@ func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status st
 	}
 	if status != "" {
 		return queryNotes(ctx, db, `
-			SELECT id, created_at, raw_text, duration_sec, audio_path, status
+			SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+			       confidence_overall, confidence_min, suspect_hallucination
 			FROM notes
 			WHERE created_at >= ? AND created_at < ? AND status = ?
 			ORDER BY created_at DESC, id DESC
@@ -131,14 +170,16 @@ func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status st
 	}
 	if includeDiscarded {
 		return queryNotes(ctx, db, `
-			SELECT id, created_at, raw_text, duration_sec, audio_path, status
+			SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+			       confidence_overall, confidence_min, suspect_hallucination
 			FROM notes
 			WHERE created_at >= ? AND created_at < ?
 			ORDER BY created_at DESC, id DESC
 			LIMIT ?`, from.Unix(), to.Unix(), limit)
 	}
 	return queryNotes(ctx, db, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
 		WHERE created_at >= ? AND created_at < ? AND status != 'discarded'
 		ORDER BY created_at DESC, id DESC
@@ -160,6 +201,7 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeD
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status,
+		       n.confidence_overall, n.confidence_min, n.suspect_hallucination,
 		       bm25(notes_fts) AS rank,
 		       snippet(notes_fts, 0, '<<', '>>', '...', 30) AS snip
 		FROM notes_fts
@@ -176,11 +218,14 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeD
 		var nr NoteWithRank
 		var ts int64
 		var status string
-		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status, &nr.Rank, &nr.Snippet); err != nil {
+		var suspect int
+		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status,
+			&nr.ConfidenceOverall, &nr.ConfidenceMin, &suspect, &nr.Rank, &nr.Snippet); err != nil {
 			return nil, err
 		}
 		nr.CreatedAt = time.Unix(ts, 0)
 		nr.Status = Status(status)
+		nr.SuspectHallucination = suspect != 0
 		out = append(out, nr)
 	}
 	return out, rows.Err()
@@ -204,10 +249,13 @@ func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
 	var n Note
 	var ts int64
 	var status string
+	var suspect int
 	err := db.QueryRowContext(ctx, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
-		WHERE id = ?`, id).Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status)
+		WHERE id = ?`, id).Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status,
+		&n.ConfidenceOverall, &n.ConfidenceMin, &suspect)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Note{}, ErrNoteNotFound
 	}
@@ -216,6 +264,7 @@ func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
 	}
 	n.CreatedAt = time.Unix(ts, 0)
 	n.Status = Status(status)
+	n.SuspectHallucination = suspect != 0
 	return n, nil
 }
 
@@ -341,11 +390,14 @@ func queryNotes(ctx context.Context, db *DB, query string, args ...any) ([]Note,
 		var n Note
 		var ts int64
 		var status string
-		if err := rows.Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status); err != nil {
+		var suspect int
+		if err := rows.Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status,
+			&n.ConfidenceOverall, &n.ConfidenceMin, &suspect); err != nil {
 			return nil, err
 		}
 		n.CreatedAt = time.Unix(ts, 0)
 		n.Status = Status(status)
+		n.SuspectHallucination = suspect != 0
 		notes = append(notes, n)
 	}
 	return notes, rows.Err()

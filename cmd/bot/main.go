@@ -52,6 +52,16 @@ func main() {
 		audioDir = "" // disables retention paths inside the bot
 	}
 
+	hallucinationThresh := 0.0 // 0 → telegram.New picks default 0.6
+	if v := os.Getenv("HALLUCINATION_THRESHOLD"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f > 1 {
+			logger.Error("HALLUCINATION_THRESHOLD must be a float in [0, 1]", "value", v)
+			os.Exit(1)
+		}
+		hallucinationThresh = f
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -70,9 +80,10 @@ func main() {
 	w := whisper.New(whisperURL)
 
 	bot, err := telegram.New(token, telegram.Config{
-		Locale:     locale,
-		BasePrompt: basePrompt,
-		AudioDir:   audioDir,
+		Locale:              locale,
+		BasePrompt:          basePrompt,
+		AudioDir:            audioDir,
+		HallucinationThresh: hallucinationThresh,
 	}, allowedUser, store, w, logger)
 	if err != nil {
 		logger.Error("init bot", "err", err)

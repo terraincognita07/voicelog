@@ -29,7 +29,8 @@ func formatDuration(sec int) string {
 type messages struct {
 	Welcome        string // shown on /start — short greeting + first-step hint
 	Help           string // shown on /help — full guide
-	Recorded       func(id int64, durSec int, pending int, preview string) string
+	Recorded       func(id int64, durSec int, pending int, preview string, suspect bool) string
+	SuspectWarn    string // appended to saved-reply when first segment looks like silence
 	EmptyTrans     string
 	EmptyList      string
 	EmptyPending   string // friendlier "(empty)" for /pending
@@ -110,13 +111,18 @@ var locales = map[string]messages{
 			"/vocab add <term> [<term>...] — batch add to vocabulary\n" +
 			"/vocab del <term> — remove one term\n" +
 			"/vocab clear confirm — wipe the vocabulary",
-		Recorded: func(id int64, durSec int, p int, preview string) string {
+		Recorded: func(id int64, durSec int, p int, preview string, suspect bool) string {
 			head := fmt.Sprintf("✓ Note #%d saved · %s · %d pending", id, formatDuration(durSec), p)
-			if preview == "" {
-				return head
+			out := head
+			if preview != "" {
+				out += "\n\n«" + preview + "»"
 			}
-			return head + "\n\n«" + preview + "»"
+			if suspect {
+				out += "\n\n⚠ Looks like silence or non-speech — the transcription may be hallucinated. Review or 🗑."
+			}
+			return out
 		},
+		SuspectWarn: "⚠ Looks like silence or non-speech — the transcription may be hallucinated. Review or 🗑.",
 		EmptyTrans:   "⚠ Transcription came back empty — too quiet, too short, or non-speech audio.",
 		EmptyList:    "Nothing here yet.",
 		EmptyPending: "No pending notes. Record a voice message and it'll appear here.",
@@ -290,13 +296,18 @@ var locales = map[string]messages{
 			"/vocab add <термин> [<термин>...] — пакетное добавление\n" +
 			"/vocab del <термин> — удалить один\n" +
 			"/vocab clear confirm — очистить словарь",
-		Recorded: func(id int64, durSec int, p int, preview string) string {
+		Recorded: func(id int64, durSec int, p int, preview string, suspect bool) string {
 			head := fmt.Sprintf("✓ Заметка #%d сохранена · %s · в очереди %d", id, formatDuration(durSec), p)
-			if preview == "" {
-				return head
+			out := head
+			if preview != "" {
+				out += "\n\n«" + preview + "»"
 			}
-			return head + "\n\n«" + preview + "»"
+			if suspect {
+				out += "\n\n⚠ Похоже на тишину или не речь — транскрипция может быть выдуманной. Проверь или 🗑."
+			}
+			return out
 		},
+		SuspectWarn: "⚠ Похоже на тишину или не речь — транскрипция может быть выдуманной. Проверь или 🗑.",
 		EmptyTrans:   "⚠ Транскрипция пустая — слишком тихо, коротко или не речь.",
 		EmptyList:    "Пока ничего нет.",
 		EmptyPending: "Очередь пуста. Запиши голосовое — заметка появится здесь.",

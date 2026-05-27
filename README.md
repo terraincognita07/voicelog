@@ -398,6 +398,7 @@ For personal self-host these are usually acceptable. To mitigate:
 | `WHISPER_PROMPT` | no | — | Optional whisper "initial prompt" (admin default). User-managed vocabulary (`/vocab`) is appended after this. |
 | `AUDIO_RETENTION_DAYS` | no | `0` | If `> 0`, keep the original `.oga` voice file at `AUDIO_DIR/<note_id>.oga` for that many days. A background janitor sweeps every 6h. `0` (default) disables retention — audio is deleted right after transcription. |
 | `AUDIO_DIR` | no | `/data/audio` | Where retained `.oga` files live. Only consulted when `AUDIO_RETENTION_DAYS > 0`. |
+| `HALLUCINATION_THRESHOLD` | no | `0.6` | Whisper hallucination detector cutoff (float ∈ [0, 1]). First segment's `no_speech_prob` above this flags the note as suspect. Raise to be stricter, lower to be looser. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
 
@@ -421,7 +422,11 @@ on the `/mcp` route, or via the token-in-URL pattern on `/t/<token>/mcp`
   Discarded notes are filtered out by default; opt in via `include_discarded`.
 - **`get_note(id: int)`** —
   fetch one full note by id. Returns the note object or an error if the
-  id is unknown.
+  id is unknown. Every note returned by MCP carries `confidence_overall`,
+  `confidence_min` (mean / worst whisper `avg_logprob` — closer to 0 is
+  more confident; `null` if the note was created before the verbose-JSON
+  pipeline), and `suspect_hallucination` (bool — first whisper segment
+  exceeded the silence-probability threshold).
 - **`mark_analyzed(ids: int[])`** —
   flip status to `analyzed` for the given ids. Discarded notes are
   not touched. Returns `{updated: N}`.
