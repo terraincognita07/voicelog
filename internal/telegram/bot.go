@@ -86,6 +86,7 @@ func (tb *Bot) Stop()  { tb.bot.Stop() }
 // per-message Data carries the note ID.
 var (
 	discardBtn        = tele.InlineButton{Unique: "discard"}         // saved-note reply
+	savedRestoreBtn   = tele.InlineButton{Unique: "saved_restore"}   // undo discard on saved-note reply
 	discardPendingBtn = tele.InlineButton{Unique: "discard_pending"} // /pending list
 	discardRecentBtn  = tele.InlineButton{Unique: "discard_recent"}  // /recent list
 	restoreRecentBtn  = tele.InlineButton{Unique: "restore_recent"}  // /recent list
@@ -137,6 +138,7 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle("/help", tb.cmdHelp)
 	tb.bot.Handle("/vocab", tb.cmdVocab)
 	tb.bot.Handle(&discardBtn, tb.cbDiscard)
+	tb.bot.Handle(&savedRestoreBtn, tb.cbSavedRestore)
 	tb.bot.Handle(&discardPendingBtn, tb.cbDiscardPending)
 	tb.bot.Handle(&discardRecentBtn, tb.cbDiscardRecent)
 	tb.bot.Handle(&restoreRecentBtn, tb.cbRestoreRecent)
@@ -212,6 +214,11 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	// Send "typing" so the user sees the bot is alive while whisper runs.
+	// Telebot refreshes the indicator every ~5s; one shot is enough for
+	// short clips, and a fresh shot will be sent if we send a new message.
+	_ = c.Notify(tele.Typing)
+
 	tmpDir, err := os.MkdirTemp("", "voicelog-*")
 	if err != nil {
 		return tb.errReply(c, "tmp dir", err)
@@ -225,6 +232,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 
 	prompt := tb.composePrompt(ctx)
 	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration, "prompt_len", len(prompt))
+	_ = c.Notify(tele.Typing) // refresh the indicator before the long call
 	text, err := tb.whisper.Transcribe(ctx, srcPath, prompt)
 	if err != nil {
 		return tb.errReply(c, "whisper", err)
@@ -240,19 +248,59 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 
 	pending, _ := tb.db.CountPending(ctx)
-	return c.Send(tb.msg.Recorded(id, pending), tb.discardMarkup(id))
+	preview := previewText(text, 200)
+	return c.Send(tb.msg.Recorded(id, duration, pending, preview), tb.discardMarkup(id))
 }
 
-// discardMarkup builds a one-button inline keyboard tied to a specific note.
-func (tb *Bot) discardMarkup(id int64) *tele.ReplyMarkup {
-	btn := discardBtn
-	btn.Text = tb.msg.DiscardBtn
+// previewText returns a single-line, run-length-capped preview suitable
+// for the saved-reply / discard confirmation. Newlines are flattened to
+// spaces; runs over `cap` are truncated with an ellipsis.
+func previewText(s string, cap int) string {
+	flat := strings.ReplaceAll(s, "\n", " ")
+	runes := []rune(flat)
+	if len(runes) > cap {
+		return string(runes[:cap]) + "…"
+	}
+	return flat
+}
+
+// savedMarkup is the inline keyboard for a saved-note reply. When the
+// note is pending: [🗑 Discard]. When discarded: [↩ Restore]. The button
+// swaps in place on tap so the action is reversible from the same
+// message without leaving the chat.
+func (tb *Bot) savedMarkup(id int64, discarded bool) *tele.ReplyMarkup {
+	var btn tele.InlineButton
+	if discarded {
+		btn = savedRestoreBtn
+		btn.Text = tb.msg.RestoreBtn
+	} else {
+		btn = discardBtn
+		btn.Text = tb.msg.DiscardBtn
+	}
 	btn.Data = strconv.FormatInt(id, 10)
 	return &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{btn}}}
 }
 
-// cbDiscard handles the inline [🗑 Discard] press attached to a saved-note
-// reply. Telegram callback data is the bare note ID.
+// discardMarkup preserves the original API used by the initial saved-reply
+// send (note starts pending).
+func (tb *Bot) discardMarkup(id int64) *tele.ReplyMarkup {
+	return tb.savedMarkup(id, false)
+}
+
+// notePreview returns a short one-line preview of a note's raw text,
+// suitable for the saved-reply confirmation. Returns "" on any DB error
+// — callsites tolerate a missing preview.
+func (tb *Bot) notePreview(ctx context.Context, id int64, cap int) string {
+	n, err := tb.db.GetNote(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return previewText(n.RawText, cap)
+}
+
+// cbDiscard handles [🗑 Discard] under a saved-note reply. Edits the
+// message in place: confirmation + preview of the discarded text, and
+// the button becomes [↩ Restore] for one-tap undo.
 func (tb *Bot) cbDiscard(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
@@ -269,16 +317,59 @@ func (tb *Bot) cbDiscard(c tele.Context) error {
 			_ = c.Edit(tb.msg.NotFound(id))
 			return c.Respond()
 		}
-		tb.logger.Error("callback discard", "id", id, "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+		return tb.errToast(c, "discard", err)
 	}
-	_ = c.Edit(tb.msg.DiscardedReply(id))
+	preview := tb.notePreview(ctx, id, 200)
+	_ = c.Edit(tb.msg.DiscardedReply(id, preview), tb.savedMarkup(id, true))
 	return c.Respond()
 }
 
-func (tb *Bot) errReply(c tele.Context, label string, err error) error {
+// cbSavedRestore is the inverse of cbDiscard, attached to the [↩ Restore]
+// button rendered after a discard.
+func (tb *Bot) cbSavedRestore(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := tb.db.RestoreNote(ctx, id); err != nil {
+		if errors.Is(err, db.ErrNoteNotFound) {
+			_ = c.Edit(tb.msg.NotFound(id))
+			return c.Respond()
+		}
+		return tb.errToast(c, "restore", err)
+	}
+	preview := tb.notePreview(ctx, id, 200)
+	_ = c.Edit(tb.msg.RestoredReply(id, preview), tb.savedMarkup(id, false))
+	return c.Respond()
+}
+
+// userErrMsg returns the sanitized user-facing message for an internal
+// error label. The raw err is logged at Error level — never sent to the
+// chat to avoid leaking internal hostnames, paths, or third-party body
+// content.
+func (tb *Bot) userErrMsg(label string, err error) string {
 	tb.logger.Error(label, "err", err)
-	return c.Send(tb.msg.Error(label, err))
+	if msg, ok := tb.msg.Errors[label]; ok {
+		return "⚠ " + msg
+	}
+	return "⚠ " + tb.msg.ErrFallback
+}
+
+func (tb *Bot) errReply(c tele.Context, label string, err error) error {
+	return c.Send(tb.userErrMsg(label, err))
+}
+
+// errToast surfaces an error as a small popup over a callback (≤200 chars,
+// auto-dismisses after a few seconds). Use from callback handlers when the
+// underlying message must stay unchanged.
+func (tb *Bot) errToast(c tele.Context, label string, err error) error {
+	return c.Respond(&tele.CallbackResponse{Text: tb.userErrMsg(label, err)})
 }
 
 // --- list view: state encoding ---------------------------------------------
@@ -416,12 +507,14 @@ func (tb *Bot) groupByDay(notes []db.Note) []dayGroup {
 	for _, n := range notes {
 		key := n.CreatedAt.Format("2006-01-02")
 		if len(out) == 0 || out[len(out)-1].dateKey != key {
-			label := key
+			var label string
 			switch key {
 			case todayKey:
 				label = tb.msg.DayToday
 			case yesterdayKey:
 				label = tb.msg.DayYesterday
+			default:
+				label = tb.msg.DayLabel(n.CreatedAt)
 			}
 			out = append(out, dayGroup{dateKey: key, label: label})
 		}
@@ -430,8 +523,10 @@ func (tb *Bot) groupByDay(notes []db.Note) []dayGroup {
 	return out
 }
 
-// formatNoteLine: "#9 22:04 · short text…". withStatus appends [status].
-func formatNoteLine(n db.Note, withStatus bool) string {
+// formatNoteLine renders one row of a day-grouped list:
+//   #9 22:04 · text…           (withStatus = false)
+//   #9 22:04 [pending] · text… (withStatus = true; status is locale-translated)
+func (tb *Bot) formatNoteLine(n db.Note, withStatus bool) string {
 	text := strings.ReplaceAll(n.RawText, "\n", " ")
 	runes := []rune(text)
 	if len(runes) > 60 {
@@ -439,7 +534,7 @@ func formatNoteLine(n db.Note, withStatus bool) string {
 	}
 	ts := n.CreatedAt.Format("15:04")
 	if withStatus {
-		return fmt.Sprintf("#%d %s [%s] · %s", n.ID, ts, n.Status, text)
+		return fmt.Sprintf("#%d %s [%s] · %s", n.ID, ts, tb.msg.Status(string(n.Status)), text)
 	}
 	return fmt.Sprintf("#%d %s · %s", n.ID, ts, text)
 }
@@ -464,7 +559,7 @@ func (tb *Bot) renderDayGroupedBody(groups []dayGroup, expDay string, withStatus
 		}
 		for _, n := range g.notes {
 			b.WriteByte('\n')
-			b.WriteString(formatNoteLine(n, withStatus))
+			b.WriteString(tb.formatNoteLine(n, withStatus))
 		}
 	}
 	return b.String()
@@ -545,7 +640,7 @@ func (tb *Bot) renderPending(ctx context.Context, st pendingState) (string, *tel
 		notes = notes[:st.Limit]
 	}
 	if len(notes) == 0 {
-		return tb.msg.EmptyList, tb.escapeFromEmpty(), nil
+		return tb.msg.EmptyPending, tb.escapeFromEmpty(), nil
 	}
 
 	groups := tb.groupByDay(notes)
@@ -606,7 +701,7 @@ func (tb *Bot) renderRecent(ctx context.Context, st recentState) (string, *tele.
 
 	rows := [][]tele.InlineButton{tb.recentFilterRow(st.Filter)}
 	if len(notes) == 0 {
-		return tb.msg.EmptyList, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
+		return tb.msg.EmptyRecent(st.Filter), &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 	}
 
 	groups := tb.groupByDay(notes)
@@ -692,7 +787,7 @@ func (tb *Bot) cbPendingMore(c tele.Context) error {
 	}
 	body, kb, err := tb.renderPending(context.Background(), parsePendingState(cb.Data))
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -705,7 +800,7 @@ func (tb *Bot) cbRecentMore(c tele.Context) error {
 	}
 	body, kb, err := tb.renderRecent(context.Background(), parseRecentState(cb.Data))
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -718,7 +813,7 @@ func (tb *Bot) cbPendingDay(c tele.Context) error {
 	}
 	body, kb, err := tb.renderPending(context.Background(), parsePendingState(cb.Data))
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -731,19 +826,25 @@ func (tb *Bot) cbRecentDay(c tele.Context) error {
 	}
 	body, kb, err := tb.renderRecent(context.Background(), parseRecentState(cb.Data))
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
 }
 
 func (tb *Bot) cbPendingClearAsk(c tele.Context) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	n, err := tb.db.CountPending(ctx)
+	if err != nil {
+		return tb.errToast(c, "list pending", err)
+	}
 	yes := pendingClearYesBtn
 	yes.Text = tb.msg.ClearAllYesBtn
 	no := pendingClearNoBtn
 	no.Text = tb.msg.ClearAllNoBtn
 	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
-	_ = c.Edit(tb.msg.ClearAllAsk, kb)
+	_ = c.Edit(tb.msg.ClearAllAsk(n), kb)
 	return c.Respond()
 }
 
@@ -753,12 +854,12 @@ func (tb *Bot) cbPendingClearYes(c tele.Context) error {
 	n, err := tb.db.DiscardAllPending(ctx)
 	if err != nil {
 		tb.logger.Error("cb pending clear", "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("clear", err)})
+		return tb.errToast(c, "clear", err)
 	}
 	tb.logger.Info("pending cleared", "n", n)
 	body, kb, rerr := tb.renderPending(ctx, pendingState{Limit: pendingPageSize})
 	if rerr != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", rerr)})
+		return tb.errToast(c, "refresh", rerr)
 	}
 	body = tb.msg.ClearAllDone(n) + "\n\n" + body
 	tb.editWithList(c, body, kb)
@@ -768,7 +869,7 @@ func (tb *Bot) cbPendingClearYes(c tele.Context) error {
 func (tb *Bot) cbPendingClearNo(c tele.Context) error {
 	body, kb, err := tb.renderPending(context.Background(), pendingState{Limit: pendingPageSize})
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -786,7 +887,7 @@ func (tb *Bot) cbRecentFilter(c tele.Context) error {
 	}
 	body, kb, err := tb.renderRecent(context.Background(), recentState{Filter: filter, Limit: recentPageSize})
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -833,11 +934,11 @@ func (tb *Bot) cbDiscardPending(c tele.Context) error {
 	defer cancel()
 	if err := tb.db.MarkDiscarded(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
 		tb.logger.Error("cb discard pending", "id", id, "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+		return tb.errToast(c, "discard", err)
 	}
 	body, kb, err := tb.renderPending(ctx, st)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -856,11 +957,11 @@ func (tb *Bot) cbDiscardRecent(c tele.Context) error {
 	defer cancel()
 	if err := tb.db.MarkDiscarded(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
 		tb.logger.Error("cb discard recent", "id", id, "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
+		return tb.errToast(c, "discard", err)
 	}
 	body, kb, err := tb.renderRecent(ctx, st)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -879,11 +980,11 @@ func (tb *Bot) cbRestoreRecent(c tele.Context) error {
 	defer cancel()
 	if _, err := tb.db.RestoreNote(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
 		tb.logger.Error("cb restore recent", "id", id, "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("restore", err)})
+		return tb.errToast(c, "restore", err)
 	}
 	body, kb, err := tb.renderRecent(ctx, st)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
 	return c.Respond()
@@ -964,7 +1065,7 @@ func (tb *Bot) cmdVocab(c tele.Context) error {
 				added++
 			}
 		}
-		return c.Send(tb.msg.VocabAdded(added, len(args)-1))
+		return tb.sendVocabWithPrefix(c, ctx, tb.msg.VocabAdded(added, len(args)-1))
 	case "del", "rm", "remove":
 		if len(args) != 2 {
 			return c.Send(tb.msg.VocabUsage)
@@ -973,11 +1074,15 @@ func (tb *Bot) cmdVocab(c tele.Context) error {
 		if err != nil {
 			return tb.errReply(c, "vocab del", err)
 		}
-		return c.Send(tb.msg.VocabRemoved(args[1], ok))
+		return tb.sendVocabWithPrefix(c, ctx, tb.msg.VocabRemoved(args[1], ok))
 	case "clear":
 		// Two-step: require `clear confirm` to actually wipe.
 		if len(args) != 2 || args[1] != "confirm" {
-			return c.Send(tb.msg.VocabClearAsk)
+			terms, err := tb.db.ListVocab(ctx)
+			if err != nil {
+				return tb.errReply(c, "vocab list", err)
+			}
+			return c.Send(tb.msg.VocabClearAsk(len(terms)) + "\n\nText fallback: /vocab clear confirm")
 		}
 		n, err := tb.db.ClearVocab(ctx)
 		if err != nil {
@@ -1002,6 +1107,9 @@ func (tb *Bot) renderVocab(ctx context.Context) (string, *tele.ReplyMarkup, erro
 		return "", nil, err
 	}
 	body := tb.msg.VocabHeader(len(terms))
+	if len(terms) == 0 {
+		body = tb.msg.EmptyVocab
+	}
 	var rows [][]tele.InlineButton
 	var current []tele.InlineButton
 	for _, t := range terms {
@@ -1029,6 +1137,21 @@ func (tb *Bot) renderVocab(ctx context.Context) (string, *tele.ReplyMarkup, erro
 	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 }
 
+// sendVocabWithPrefix re-renders the vocab view after a mutation and
+// sends it as a new message, prefixed with a short confirmation line.
+// Used by text-mode /vocab add|del so the user sees the result list
+// instead of just "✓ added N".
+func (tb *Bot) sendVocabWithPrefix(c tele.Context, ctx context.Context, prefix string) error {
+	body, kb, err := tb.renderVocab(ctx)
+	if err != nil {
+		return tb.errReply(c, "refresh", err)
+	}
+	if kb == nil {
+		return c.Send(prefix + "\n\n" + body)
+	}
+	return c.Send(prefix+"\n\n"+body, kb)
+}
+
 func (tb *Bot) editWithVocab(c tele.Context, body string, kb *tele.ReplyMarkup) {
 	if kb == nil {
 		_ = c.Edit(body)
@@ -1050,11 +1173,11 @@ func (tb *Bot) cbVocabRemove(c tele.Context) error {
 	defer cancel()
 	if _, err := tb.db.RemoveVocab(ctx, term); err != nil {
 		tb.logger.Error("cb vocab rm", "term", term, "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("vocab rm", err)})
+		return tb.errToast(c, "vocab rm", err)
 	}
 	body, kb, err := tb.renderVocab(ctx)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithVocab(c, body, kb)
 	return c.Respond()
@@ -1066,12 +1189,18 @@ func (tb *Bot) cbVocabAddPrompt(c tele.Context) error {
 }
 
 func (tb *Bot) cbVocabClearAsk(c tele.Context) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	terms, err := tb.db.ListVocab(ctx)
+	if err != nil {
+		return tb.errToast(c, "vocab list", err)
+	}
 	yes := vocabClearYesBtn
 	yes.Text = tb.msg.VocabYesBtn
 	no := vocabClearNoBtn
 	no.Text = tb.msg.VocabNoBtn
 	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
-	_ = c.Edit(tb.msg.VocabClearAsk, kb)
+	_ = c.Edit(tb.msg.VocabClearAsk(len(terms)), kb)
 	return c.Respond()
 }
 
@@ -1080,11 +1209,11 @@ func (tb *Bot) cbVocabClearYes(c tele.Context) error {
 	defer cancel()
 	if _, err := tb.db.ClearVocab(ctx); err != nil {
 		tb.logger.Error("cb vocab clear", "err", err)
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("vocab clear", err)})
+		return tb.errToast(c, "vocab clear", err)
 	}
 	body, kb, err := tb.renderVocab(ctx)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithVocab(c, body, kb)
 	return c.Respond()
@@ -1093,7 +1222,7 @@ func (tb *Bot) cbVocabClearYes(c tele.Context) error {
 func (tb *Bot) cbVocabClearNo(c tele.Context) error {
 	body, kb, err := tb.renderVocab(context.Background())
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithVocab(c, body, kb)
 	return c.Respond()

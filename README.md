@@ -475,6 +475,15 @@ the `locales` map in `internal/telegram/locale.go`.
 - **`[🗑 Clear all]`** under `/pending` mass-discards every pending note
   in one atomic UPDATE, with a two-step Yes/No confirm. Reversible per-note
   via the `[Discarded]` filter and `↩`.
+- **Saved-reply two-way toggle.** After a voice message: `✓ Note #7 saved ·
+  0:12 · 4 pending` plus a preview of the transcription, with `[🗑 Discard]`.
+  Tap it → message becomes `🗑 Note #7 discarded · «preview»` with
+  `[↩ Restore]`. Tap back to undo. No new messages spawned.
+- **Sanitized errors.** Internal failures never leak to chat (no hostnames,
+  paths, or third-party body content). Users see e.g. `⚠ Speech recognition
+  unavailable. Try again in a moment.`; the full err lands in `slog`.
+- **Day-grouped headers** use day-of-week for older days: `📅 Tue, May 26
+  (3)` / `📅 Пн, 26 мая (3)` — easier to skim than bare ISO dates.
 
 The whisper "initial prompt" sent with each transcription is composed as
 `WHISPER_PROMPT` (env, admin-default) followed by the `/vocab` terms.

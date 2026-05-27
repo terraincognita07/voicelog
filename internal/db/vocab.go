@@ -50,10 +50,11 @@ func (db *DB) RemoveVocab(ctx context.Context, term string) (bool, error) {
 }
 
 // ListVocab returns every term in its stored (original) casing, ordered by
-// added_at ASC (oldest first).
+// added_at DESC (newest first) — so a just-added term is visible at the
+// top of the inline keyboard without scrolling.
 func (db *DB) ListVocab(ctx context.Context) ([]string, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT term FROM vocabulary ORDER BY added_at ASC, term ASC`)
+		`SELECT term FROM vocabulary ORDER BY added_at DESC, term ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -80,10 +81,12 @@ func (db *DB) ClearVocab(ctx context.Context) (int, error) {
 }
 
 // VocabPrompt returns up to MaxVocabTerms terms joined by spaces, suitable
-// as a whisper prompt suffix. Returns "" when the table is empty.
+// as a whisper prompt suffix. Returns "" when the table is empty. Order
+// matches ListVocab (newest first) so when the prompt is truncated by
+// whisper, the most-recently-added terms win.
 func (db *DB) VocabPrompt(ctx context.Context) (string, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT term FROM vocabulary ORDER BY added_at ASC, term ASC LIMIT ?`, MaxVocabTerms)
+		`SELECT term FROM vocabulary ORDER BY added_at DESC, term ASC LIMIT ?`, MaxVocabTerms)
 	if err != nil {
 		return "", err
 	}

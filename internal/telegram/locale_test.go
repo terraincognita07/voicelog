@@ -1,29 +1,57 @@
 package telegram
 
 import (
-	"errors"
 	"testing"
+	"time"
 )
 
+// TestLocalesAreComplete asserts every locale provides every user-facing
+// field — protects against half-baked translations and missed renames.
 func TestLocalesAreComplete(t *testing.T) {
 	for code, m := range locales {
 		t.Run(code, func(t *testing.T) {
-			if m.Help == "" {
-				t.Error("Help is empty")
+			// Plain strings.
+			for label, got := range map[string]string{
+				"Help":               m.Help,
+				"EmptyTrans":         m.EmptyTrans,
+				"EmptyList":          m.EmptyList,
+				"EmptyPending":       m.EmptyPending,
+				"EmptyVocab":         m.EmptyVocab,
+				"UsageDelete":        m.UsageDelete,
+				"BadID":              m.BadID,
+				"DiscardBtn":         m.DiscardBtn,
+				"RestoreBtn":         m.RestoreBtn,
+				"MenuPending":        m.MenuPending,
+				"MenuRecent":         m.MenuRecent,
+				"MenuVocab":          m.MenuVocab,
+				"MenuHelp":           m.MenuHelp,
+				"VocabUsage":         m.VocabUsage,
+				"VocabAddBtn":        m.VocabAddBtn,
+				"VocabClearBtn":      m.VocabClearBtn,
+				"VocabYesBtn":        m.VocabYesBtn,
+				"VocabNoBtn":         m.VocabNoBtn,
+				"VocabAddPrompt":     m.VocabAddPrompt,
+				"ClearAllBtn":        m.ClearAllBtn,
+				"ClearAllYesBtn":     m.ClearAllYesBtn,
+				"ClearAllNoBtn":      m.ClearAllNoBtn,
+				"GoDiscardedBtn":     m.GoDiscardedBtn,
+				"ShowMoreBtn":        m.ShowMoreBtn,
+				"FilterAllBtn":       m.FilterAllBtn,
+				"FilterPendingBtn":   m.FilterPendingBtn,
+				"FilterDiscardedBtn": m.FilterDiscardedBtn,
+				"FilterActiveMark":   m.FilterActiveMark,
+				"DayToday":           m.DayToday,
+				"DayYesterday":       m.DayYesterday,
+				"ErrFallback":        m.ErrFallback,
+				"Transcribing":       m.Transcribing,
+			} {
+				if got == "" {
+					t.Errorf("%s is empty", label)
+				}
 			}
-			if m.EmptyTrans == "" {
-				t.Error("EmptyTrans is empty")
-			}
-			if m.EmptyList == "" {
-				t.Error("EmptyList is empty")
-			}
-			if m.UsageDelete == "" {
-				t.Error("UsageDelete is empty")
-			}
-			if m.BadID == "" {
-				t.Error("BadID is empty")
-			}
-			if m.Recorded == nil || m.Recorded(1, 0) == "" {
+
+			// Functions that take args and must return non-empty.
+			if m.Recorded == nil || m.Recorded(1, 12, 3, "hello") == "" || m.Recorded(1, 0, 0, "") == "" {
 				t.Error("Recorded missing or returns empty")
 			}
 			if m.NotFound == nil || m.NotFound(1) == "" {
@@ -32,17 +60,11 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.Discarded == nil || m.Discarded(1) == "" {
 				t.Error("Discarded missing or returns empty")
 			}
-			if m.Error == nil || m.Error("x", errors.New("y")) == "" {
-				t.Error("Error missing or returns empty")
-			}
-			if m.DiscardBtn == "" {
-				t.Error("DiscardBtn is empty")
-			}
-			if m.DiscardedReply == nil || m.DiscardedReply(1) == "" {
+			if m.DiscardedReply == nil || m.DiscardedReply(1, "x") == "" || m.DiscardedReply(1, "") == "" {
 				t.Error("DiscardedReply missing or returns empty")
 			}
-			if m.VocabUsage == "" {
-				t.Error("VocabUsage is empty")
+			if m.RestoredReply == nil || m.RestoredReply(1, "x") == "" || m.RestoredReply(1, "") == "" {
+				t.Error("RestoredReply missing or returns empty")
 			}
 			if m.VocabList == nil || m.VocabList(nil) == "" || m.VocabList([]string{"a"}) == "" {
 				t.Error("VocabList missing or returns empty")
@@ -53,42 +75,67 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.VocabRemoved == nil || m.VocabRemoved("x", true) == "" || m.VocabRemoved("x", false) == "" {
 				t.Error("VocabRemoved missing or returns empty")
 			}
-			if m.VocabClearAsk == "" {
-				t.Error("VocabClearAsk is empty")
-			}
-			if m.VocabCleared == nil || m.VocabCleared(3) == "" {
-				t.Error("VocabCleared missing or returns empty")
-			}
-			if len(m.Commands) == 0 {
-				t.Error("Commands list is empty")
-			}
-			if m.MenuPending == "" || m.MenuRecent == "" || m.MenuVocab == "" || m.MenuHelp == "" {
-				t.Error("Menu labels missing")
-			}
 			if m.VocabHeader == nil || m.VocabHeader(0) == "" || m.VocabHeader(3) == "" {
 				t.Error("VocabHeader missing or returns empty")
 			}
 			if m.VocabRmBtn == nil || m.VocabRmBtn("x") == "" {
 				t.Error("VocabRmBtn missing or returns empty")
 			}
-			if m.VocabAddBtn == "" || m.VocabClearBtn == "" || m.VocabYesBtn == "" || m.VocabNoBtn == "" {
-				t.Error("Vocab inline buttons missing")
+			if m.VocabClearAsk == nil || m.VocabClearAsk(3) == "" {
+				t.Error("VocabClearAsk missing or returns empty")
 			}
-			if m.VocabAddPrompt == "" {
-				t.Error("VocabAddPrompt is empty")
+			if m.VocabCleared == nil || m.VocabCleared(3) == "" {
+				t.Error("VocabCleared missing or returns empty")
 			}
-			if m.ClearAllBtn == "" || m.ClearAllAsk == "" || m.ClearAllYesBtn == "" || m.ClearAllNoBtn == "" {
-				t.Error("Clear-all labels missing")
+			if m.ClearAllAsk == nil || m.ClearAllAsk(5) == "" {
+				t.Error("ClearAllAsk missing or returns empty")
 			}
 			if m.ClearAllDone == nil || m.ClearAllDone(3) == "" {
-				t.Error("ClearAllDone missing or empty")
+				t.Error("ClearAllDone missing or returns empty")
 			}
-			if m.GoDiscardedBtn == "" || m.ShowMoreBtn == "" || m.FilterAllBtn == "" || m.FilterPendingBtn == "" || m.FilterDiscardedBtn == "" {
-				t.Error("List nav labels missing")
+			if m.EmptyRecent == nil {
+				t.Error("EmptyRecent is nil")
+			} else {
+				for _, f := range []string{"", "pending", "discarded"} {
+					if m.EmptyRecent(f) == "" {
+						t.Errorf("EmptyRecent(%q) returned empty", f)
+					}
+				}
+			}
+			if m.Status == nil || m.Status("pending") == "" || m.Status("analyzed") == "" || m.Status("discarded") == "" {
+				t.Error("Status missing or returns empty for known status")
+			}
+			if m.DayHeader == nil || m.DayHeader("today", 5) == "" {
+				t.Error("DayHeader missing or returns empty")
+			}
+			if m.DayLabel == nil || m.DayLabel(time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)) == "" {
+				t.Error("DayLabel missing or returns empty")
+			}
+
+			// Commands list.
+			if len(m.Commands) == 0 {
+				t.Error("Commands list is empty")
 			}
 			for i, h := range m.Commands {
 				if h.Cmd == "" || h.Desc == "" {
 					t.Errorf("Commands[%d] has empty field: %+v", i, h)
+				}
+			}
+
+			// Errors map: must cover every label currently used by errReply
+			// callsites, plus fall back gracefully on unknown labels.
+			expectedErrLabels := []string{
+				"tmp dir", "download from telegram", "whisper", "insert note",
+				"list pending", "list recent", "refresh",
+				"discard", "restore", "clear", "mark discarded",
+				"vocab list", "vocab add", "vocab del", "vocab clear", "vocab rm",
+			}
+			if m.Errors == nil {
+				t.Fatal("Errors map is nil")
+			}
+			for _, label := range expectedErrLabels {
+				if v, ok := m.Errors[label]; !ok || v == "" {
+					t.Errorf("Errors[%q] missing or empty", label)
 				}
 			}
 		})
@@ -104,5 +151,33 @@ func TestPickLocaleFallback(t *testing.T) {
 	}
 	if pickLocale("ru").Help != locales["ru"].Help {
 		t.Error("ru should return ru")
+	}
+}
+
+// TestFormatDuration smoke-tests the seconds → M:SS helper used inside
+// Recorded(). Not locale-specific, lives here next to the consumer.
+func TestFormatDuration(t *testing.T) {
+	cases := map[int]string{
+		0:   "0:00",
+		7:   "0:07",
+		59:  "0:59",
+		60:  "1:00",
+		83:  "1:23",
+		600: "10:00",
+		-3:  "0:00", // defensive: negative collapses to zero
+	}
+	for in, want := range cases {
+		if got := formatDuration(in); got != want {
+			t.Errorf("formatDuration(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestFormatDayRu smoke-tests the Russian short-form day label.
+func TestFormatDayRu(t *testing.T) {
+	// 2026-05-26 was a Tuesday.
+	got := formatDayRu(time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC))
+	if got != "Вт, 26 мая" {
+		t.Errorf("formatDayRu = %q, want %q", got, "Вт, 26 мая")
 	}
 }
