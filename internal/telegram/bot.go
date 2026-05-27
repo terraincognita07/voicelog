@@ -20,6 +20,7 @@ import (
 	"voicelog/internal/audio"
 	"voicelog/internal/db"
 	"voicelog/internal/diskguard"
+	"voicelog/internal/promptbuilder"
 	"voicelog/internal/whisper"
 )
 
@@ -305,7 +306,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 		}
 	}
 
-	prompt := tb.composePrompt(ctx)
+	prompt := promptbuilder.Compose(ctx, tb.db, tb.basePrompt, tb.logger)
 	tb.logger.Info("transcribing", "path", srcPath, "duration_sec", duration, "prompt_len", len(prompt))
 	_ = c.Notify(tele.Typing) // refresh the indicator before the long call
 	result, err := tb.whisper.Transcribe(ctx, srcPath, prompt)
@@ -399,29 +400,4 @@ func (tb *Bot) cmdDelete(c tele.Context) error {
 	}
 	return c.Send(tb.msg.Discarded(id))
 }
-
-// composePrompt builds the whisper "initial prompt" as
-//   basePrompt + " " + vocabulary terms
-// Falls back gracefully on DB error — base prompt alone is better than
-// failing the transcription.
-func (tb *Bot) composePrompt(ctx context.Context) string {
-	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	vocab, err := tb.db.VocabPrompt(dbCtx)
-	if err != nil {
-		tb.logger.Warn("vocab prompt", "err", err)
-		return tb.basePrompt
-	}
-	switch {
-	case tb.basePrompt == "" && vocab == "":
-		return ""
-	case tb.basePrompt == "":
-		return vocab
-	case vocab == "":
-		return tb.basePrompt
-	default:
-		return tb.basePrompt + " " + vocab
-	}
-}
-
 

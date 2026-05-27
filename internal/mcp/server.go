@@ -14,6 +14,7 @@ import (
 
 	"voicelog/internal/audio"
 	"voicelog/internal/db"
+	"voicelog/internal/promptbuilder"
 	"voicelog/internal/whisper"
 )
 
@@ -455,7 +456,7 @@ func registerRetranscribe(s *server.MCPServer, store *db.DB, deps RetranscribeDe
 		}
 
 		audioPath := audio.Resolve(deps.AudioDir, note.AudioPath.String)
-		prompt := composePrompt(ctx, store, deps.BasePrompt)
+		prompt := promptbuilder.Compose(ctx, store, deps.BasePrompt, logger)
 		result, err := deps.Whisper.Transcribe(ctx, audioPath, prompt)
 		if err != nil {
 			logger.Error("retranscribe: whisper", "id", id, "err", err)
@@ -497,25 +498,6 @@ func registerRetranscribe(s *server.MCPServer, store *db.DB, deps RetranscribeDe
 	})
 }
 
-// composePrompt mirrors the bot's processFile prompt construction: a
-// shared free-form admin prompt (basePrompt) plus the user-managed
-// vocabulary, joined by a space. Empty vocabulary just returns basePrompt.
-func composePrompt(ctx context.Context, store *db.DB, basePrompt string) string {
-	dbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	vocab, _ := store.VocabPrompt(dbCtx) // tolerate failures — base prompt alone is fine
-	base := strings.TrimSpace(basePrompt)
-	switch {
-	case base == "" && vocab == "":
-		return ""
-	case base == "":
-		return vocab
-	case vocab == "":
-		return base
-	default:
-		return base + " " + vocab
-	}
-}
 
 func toInt64Slice(v any) ([]int64, error) {
 	arr, ok := v.([]any)

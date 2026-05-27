@@ -18,6 +18,15 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   files in `AUDIO_DIR` with no matching DB row). Both are read-mostly,
   idempotent, and skipped when retention is disabled.
 
+### Changed
+
+- **`composePrompt` extracted to `internal/promptbuilder`.** Both the
+  bot's live-transcription path and the MCP `retranscribe` tool now
+  call `promptbuilder.Compose(ctx, src, basePrompt, logger)`. Unifies
+  two minor behavior differences (bot now `TrimSpace`s the basePrompt;
+  MCP now Warn-logs `VocabPrompt` errors). `VocabSource` is a minimal
+  interface — `*db.DB` satisfies it implicitly.
+
 ### Fixed
 
 - **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply
