@@ -14,18 +14,21 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
+	"voicelog/internal/audio"
 	"voicelog/internal/db"
 	"voicelog/internal/whisper"
 )
 
 type Bot struct {
-	bot         *tele.Bot
-	db          *db.DB
-	whisper     *whisper.Client
-	allowedUser int64
-	logger      *slog.Logger
-	msg         messages
-	basePrompt  string
+	bot           *tele.Bot
+	db            *db.DB
+	whisper       *whisper.Client
+	allowedUser   int64
+	logger        *slog.Logger
+	msg           messages
+	basePrompt    string
+	audioDir      string // persistent audio storage; "" = retention disabled
+	audioRetainOn bool   // memoizes audioDir != "" for processFile
 
 	mainMenu       *tele.ReplyMarkup
 	btnMenuPending *tele.Btn
@@ -44,11 +47,22 @@ type Bot struct {
 // generates at most ~4 lines/hour instead of one-per-message.
 const rejectLogWindow = 15 * time.Minute
 
+// Config bundles the optional knobs that don't fit cleanly into the
+// positional New() signature. Zero value = defaults (no audio retention,
+// no base whisper prompt, en locale).
+type Config struct {
+	Locale     string // "en" / "ru" / fallback "en"
+	BasePrompt string // WHISPER_PROMPT env
+	AudioDir   string // "" disables audio retention
+}
+
 // New creates a Bot. locale is "en" or "ru" (or any other key in the
 // locales map). An empty or unknown locale falls back to "en".
 // basePrompt is the admin-default whisper prompt (env WHISPER_PROMPT) —
-// vocabulary terms are appended at transcribe time.
-func New(token, locale, basePrompt string, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
+// vocabulary terms are appended at transcribe time. cfg.AudioDir, when
+// non-empty, enables on-disk retention of the original .oga files (see
+// internal/audio).
+func New(token string, cfg Config, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -57,14 +71,16 @@ func New(token, locale, basePrompt string, allowedUser int64, store *db.DB, w *w
 		return nil, fmt.Errorf("init telebot: %w", err)
 	}
 	tb := &Bot{
-		bot:         b,
-		db:          store,
-		whisper:     w,
-		allowedUser: allowedUser,
-		logger:      logger,
-		msg:         pickLocale(locale),
-		basePrompt:  strings.TrimSpace(basePrompt),
-		rejectLog:   make(map[int64]time.Time),
+		bot:           b,
+		db:            store,
+		whisper:       w,
+		allowedUser:   allowedUser,
+		logger:        logger,
+		msg:           pickLocale(cfg.Locale),
+		basePrompt:    strings.TrimSpace(cfg.BasePrompt),
+		audioDir:      strings.TrimSpace(cfg.AudioDir),
+		audioRetainOn: strings.TrimSpace(cfg.AudioDir) != "",
+		rejectLog:     make(map[int64]time.Time),
 	}
 	tb.buildMenu()
 	tb.registerHandlers()
@@ -235,6 +251,19 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	id, err := tb.db.InsertNote(ctx, text, duration)
 	if err != nil {
 		return tb.errReply(c, "insert note", err)
+	}
+
+	// Opt-in audio retention. Failures here MUST NOT block the saved-
+	// reply — the transcription is the user-visible product; audio is a
+	// backup. Log and continue.
+	if tb.audioRetainOn {
+		if savedPath, sErr := audio.SaveOriginal(srcPath, tb.audioDir, id); sErr != nil {
+			tb.logger.Warn("audio retain: save failed", "id", id, "err", sErr)
+		} else if pErr := tb.db.SetAudioPath(ctx, id, savedPath); pErr != nil {
+			tb.logger.Warn("audio retain: set path failed", "id", id, "err", pErr)
+			// Path-set failed but file exists — orphan it; janitor will
+			// not pick it up. Caller-side risk for the operator.
+		}
 	}
 
 	pending, _ := tb.db.CountPending(ctx)

@@ -396,6 +396,8 @@ For personal self-host these are usually acceptable. To mitigate:
 | `TZ` | no | UTC | Timezone for log timestamps and bot replies |
 | `BOT_LOCALE` | no | `en` | Bot reply language: `en` or `ru`. Commands are unchanged in any locale. |
 | `WHISPER_PROMPT` | no | — | Optional whisper "initial prompt" (admin default). User-managed vocabulary (`/vocab`) is appended after this. |
+| `AUDIO_RETENTION_DAYS` | no | `0` | If `> 0`, keep the original `.oga` voice file at `AUDIO_DIR/<note_id>.oga` for that many days. A background janitor sweeps every 6h. `0` (default) disables retention — audio is deleted right after transcription. |
+| `AUDIO_DIR` | no | `/data/audio` | Where retained `.oga` files live. Only consulted when `AUDIO_RETENTION_DAYS > 0`. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
 
@@ -568,8 +570,12 @@ deployment. Specifically:
   compliance.
 - **Audio in tmp.** During transcription each clip lives ~10 seconds at
   `/tmp/voicelog-*/src.wav`. A co-tenant with shell access to the container
-  could read it. No encryption-at-rest. (Audio is otherwise not persisted
-  — see roadmap for opt-in retention.)
+  could read it. No encryption-at-rest.
+- **Audio retention is plaintext on disk.** When `AUDIO_RETENTION_DAYS > 0`,
+  the bot persists each voice's original `.oga` at `AUDIO_DIR/<note_id>.oga`
+  with file mode `0600`. No encryption — host-disk encryption is your
+  responsibility. The janitor sweeps every 6h; the cleanup window is your
+  retention setting, not the original record date.
 - **Whisper prompt is user-controlled.** `/vocab add` lets you write any
   string into the prompt sent to whisper.cpp. whisper.cpp is a transcription
   model, not an instruction-follower, so prompt-injection has no real

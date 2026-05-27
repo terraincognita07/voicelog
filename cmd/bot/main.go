@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"voicelog/internal/audio"
 	"voicelog/internal/db"
 	"voicelog/internal/telegram"
 	"voicelog/internal/whisper"
@@ -28,8 +29,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	locale := os.Getenv("BOT_LOCALE")        // empty falls back to "en" inside telegram.New
+	locale := os.Getenv("BOT_LOCALE")         // empty falls back to "en" inside telegram.New
 	basePrompt := os.Getenv("WHISPER_PROMPT") // optional whisper "initial prompt"
+
+	// Audio retention. Default OFF: AUDIO_RETENTION_DAYS=0 (or unset)
+	// keeps the old "delete tmp WAV after transcription, nothing
+	// persisted" behavior. Any positive integer enables retention.
+	audioRetentionDays := 0
+	if v := os.Getenv("AUDIO_RETENTION_DAYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			logger.Error("AUDIO_RETENTION_DAYS must be a non-negative integer", "value", v)
+			os.Exit(1)
+		}
+		audioRetentionDays = n
+	}
+	audioDir := os.Getenv("AUDIO_DIR")
+	if audioDir == "" {
+		audioDir = "/data/audio"
+	}
+	if audioRetentionDays == 0 {
+		audioDir = "" // disables retention paths inside the bot
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -48,19 +69,33 @@ func main() {
 
 	w := whisper.New(whisperURL)
 
-	bot, err := telegram.New(token, locale, basePrompt, allowedUser, store, w, logger)
+	bot, err := telegram.New(token, telegram.Config{
+		Locale:     locale,
+		BasePrompt: basePrompt,
+		AudioDir:   audioDir,
+	}, allowedUser, store, w, logger)
 	if err != nil {
 		logger.Error("init bot", "err", err)
 		os.Exit(1)
 	}
 
 	go bot.Start()
+
+	// Audio janitor runs only when retention is enabled. Cancellation is
+	// tied to ctx (the same Background context the bot inherited above);
+	// on SIGTERM the deferred cancel() unblocks the janitor's select.
+	if audioRetentionDays > 0 {
+		go audio.Janitor(ctx, store, audioDir, audioRetentionDays, logger)
+	}
+
 	logger.Info("voicelog bot started",
 		"allowed_user", allowedUser,
 		"db", dbPath,
 		"whisper_url", whisperURL,
 		"locale", locale,
-		"base_prompt_len", len(basePrompt))
+		"base_prompt_len", len(basePrompt),
+		"audio_retention_days", audioRetentionDays,
+		"audio_dir", audioDir)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

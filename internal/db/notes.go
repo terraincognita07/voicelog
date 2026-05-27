@@ -264,6 +264,51 @@ func (db *DB) RestoreNote(ctx context.Context, id int64) (bool, error) {
 	return false, nil
 }
 
+// SetAudioPath stores the on-disk path of the retained audio file for
+// the given note. No-op-safe: setting twice overwrites; an empty path
+// effectively clears the field.
+func (db *DB) SetAudioPath(ctx context.Context, id int64, path string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE notes SET audio_path = ? WHERE id = ?`, path, id)
+	return err
+}
+
+// ClearAudioPath nulls audio_path. Called by the janitor after deleting
+// the on-disk file so subsequent queries don't reference a missing path.
+func (db *DB) ClearAudioPath(ctx context.Context, id int64) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE notes SET audio_path = NULL WHERE id = ?`, id)
+	return err
+}
+
+// AudioRef pairs a note id with its retained audio file path.
+type AudioRef struct {
+	ID   int64
+	Path string
+}
+
+// AudiosOlderThan returns every (id, path) pair where created_at < cutoff
+// AND audio_path IS NOT NULL — the janitor's worklist for cleanup.
+func (db *DB) AudiosOlderThan(ctx context.Context, cutoff time.Time) ([]AudioRef, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, audio_path FROM notes
+		WHERE audio_path IS NOT NULL AND created_at < ?
+		ORDER BY created_at ASC`, cutoff.Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AudioRef
+	for rows.Next() {
+		var r AudioRef
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // MarkAnalyzed flips status from anything-but-discarded to 'analyzed' for the
 // given ids. Returns the number of rows actually updated.
 func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
