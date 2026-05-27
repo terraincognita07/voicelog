@@ -1140,23 +1140,3 @@ func (tb *Bot) onText(c tele.Context) error {
 	return c.Send(confirmation+"\n\n"+body, kb)
 }
 
-func (tb *Bot) formatNotes(notes []db.Note, withStatus bool) string {
-	if len(notes) == 0 {
-		return tb.msg.EmptyList
-	}
-	var b strings.Builder
-	for _, n := range notes {
-		text := strings.ReplaceAll(n.RawText, "\n", " ")
-		runes := []rune(text)
-		if len(runes) > 80 {
-			text = string(runes[:80]) + "…"
-		}
-		ts := n.CreatedAt.Format("01-02 15:04")
-		if withStatus {
-			fmt.Fprintf(&b, "#%d [%s %s] %s\n", n.ID, ts, n.Status, text)
-		} else {
-			fmt.Fprintf(&b, "#%d [%s] %s\n", n.ID, ts, text)
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
