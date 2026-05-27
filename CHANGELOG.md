@@ -81,6 +81,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   returning `verbose_json`) without log spam. Tests:
   `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
   `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
+- **Open-source readiness batch:** `Makefile` with `make test /
+  test-race / build / vet / lint / vuln / fmt / tidy / ci / clean`
+  mirroring CI; `.editorconfig` for tab/space consistency;
+  `docs/ROADMAP.md` (next / mid-term / speculative / won't-do
+  buckets); a Documentation section in README that wires
+  ARCHITECTURE / CONTRIBUTING / CHANGELOG / SECURITY /
+  CODE_OF_CONDUCT / ROADMAP into the front page; codecov badge
+  (codecov upload was already in CI, just the badge was missing).
 
 ### Changed
 

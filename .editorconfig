@@ -1,0 +1,27 @@
+# EditorConfig — https://editorconfig.org
+# Keeps tabs/spaces consistent across contributor editors. Most modern
+# editors honor this out of the box (VS Code, JetBrains, vim with a
+# plugin); for the rest, gofmt + Prettier-style defaults match.
+
+root = true
+
+[*]
+charset                  = utf-8
+end_of_line              = lf
+insert_final_newline     = true
+trim_trailing_whitespace = true
+
+[*.go]
+indent_style = tab
+indent_size  = 4
+
+[*.{md,yml,yaml,json,toml}]
+indent_style = space
+indent_size  = 2
+
+[Makefile]
+indent_style = tab
+
+[*.sql]
+indent_style = space
+indent_size  = 2

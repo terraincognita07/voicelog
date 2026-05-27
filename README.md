@@ -3,6 +3,7 @@
 Self-hosted Telegram voice journal with Claude analysis via MCP.
 
 [![CI](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml/badge.svg)](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/terraincognita07/voicelog/branch/main/graph/badge.svg)](https://codecov.io/gh/terraincognita07/voicelog)
 [![Go Report Card](https://goreportcard.com/badge/github.com/terraincognita07/voicelog)](https://goreportcard.com/report/github.com/terraincognita07/voicelog)
 [![Release](https://img.shields.io/github/v/release/terraincognita07/voicelog?display_name=tag)](https://github.com/terraincognita07/voicelog/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -60,6 +61,17 @@ If you do, it lets you talk to your past self.
 | [antirez/whisperbot](https://github.com/antirez/whisperbot) | Transcribe-and-reply | No | Yes |
 | [Voicenotes.com](https://voicenotes.com) | MCP-as-corpus | Yes (cloud) | No, paid SaaS |
 | **voicelog** | **MCP-as-corpus** | **Yes, local SQLite + FTS5** | **Yes** |
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — internal layout: services,
+  layering rules, file structure
+- [CONTRIBUTING.md](CONTRIBUTING.md) — local setup, conventions,
+  PR checklist
+- [CHANGELOG.md](CHANGELOG.md) — what shipped per release
+- [SECURITY.md](SECURITY.md) — threat model + how to report findings
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community ground rules
+- [docs/ROADMAP.md](docs/ROADMAP.md) — what's next, mid-term, speculative
 
 ## Architecture
 
@@ -628,12 +640,11 @@ deployment. Specifically:
   wrong `ALLOWED_USER_ID`, or rejected by Telegram (invalid token).
 - **MCP 502 from nginx.** Container probably not running — `docker compose ps`.
 
-## Roadmap (out of scope for v1)
+## Roadmap
 
-- Multi-user with per-user DB scoping
-- Audio retention with `audio_path` populated for re-transcription
-- Embeddings / vector search alongside FTS5
-- Web UI for browsing the corpus
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the candidate list (next /
+mid-term / speculative / won't-do). Open a discussion before starting
+work on a roadmap item so we don't overlap.
 
 ## License
 
