@@ -50,6 +50,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   db_health. As prep, `bearerAuth` moved from `cmd/mcp/main.go` to
   `internal/mcp/auth.go` (exported as `BearerAuth`) so the test
   exercises the same wrapper that ships in production.
+- **Goroutine lifecycle tests** for `audio.Janitor` and
+  `db.MaintenanceLoop`. Janitor immediate-return when retention is
+  disabled (retentionDays ≤ 0 or dir==""); both goroutines exit
+  within 2s of ctx cancel even though their tickers are configured
+  for hours/days (cancel must unblock the select on `ctx.Done()`
+  directly).
 
 ### Fixed
 

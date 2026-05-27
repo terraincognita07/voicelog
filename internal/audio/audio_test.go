@@ -402,6 +402,67 @@ func TestScanOrphans(t *testing.T) {
 	}
 }
 
+// TestJanitor_ReturnsImmediatelyWhenDisabled verifies the early-exit
+// branches: retentionDays <= 0 OR dir == "" → return without starting
+// the ticker. Caller passes a cancellable ctx; we don't cancel it
+// because the function must finish on its own.
+func TestJanitor_ReturnsImmediatelyWhenDisabled(t *testing.T) {
+	d := openTestDB(t)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+
+	cases := []struct {
+		name          string
+		dir           string
+		retentionDays int
+	}{
+		{"retention_zero", t.TempDir(), 0},
+		{"retention_negative", t.TempDir(), -1},
+		{"empty_dir", "", 7},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			done := make(chan struct{})
+			go func() {
+				Janitor(context.Background(), d, c.dir, c.retentionDays, logger)
+				close(done)
+			}()
+			select {
+			case <-done:
+				// success — returned without needing ctx cancel
+			case <-time.After(2 * time.Second):
+				t.Fatalf("Janitor did not return for disabled config (%s)", c.name)
+			}
+		})
+	}
+}
+
+// TestJanitor_ExitsOnContextCancel runs the janitor for real and
+// asserts it shuts down promptly when the parent ctx is cancelled.
+// JanitorPeriod is 6h so the ticker never fires during the test —
+// the cancel must unblock the select on ctx.Done() directly.
+func TestJanitor_ExitsOnContextCancel(t *testing.T) {
+	d := openTestDB(t)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		Janitor(ctx, d, t.TempDir(), 7, logger)
+		close(done)
+	}()
+
+	// Give the goroutine a moment to enter its select.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// shut down cleanly
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Janitor did not exit within 2s of ctx cancel")
+	}
+}
+
 func TestScanOrphans_MissingDir(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
