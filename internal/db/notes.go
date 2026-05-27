@@ -62,6 +62,33 @@ func (db *DB) ListRecent(ctx context.Context, limit int) ([]Note, error) {
 		LIMIT ?`, limit)
 }
 
+// ListRecentByStatus is ListRecent narrowed to a single status. status=""
+// is equivalent to ListRecent (no filter).
+func (db *DB) ListRecentByStatus(ctx context.Context, status string, limit int) ([]Note, error) {
+	if status == "" {
+		return db.ListRecent(ctx, limit)
+	}
+	return queryNotes(ctx, db, `
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status
+		FROM notes
+		WHERE status = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`, status, limit)
+}
+
+// CountByStatus returns how many notes hold the given status. status=""
+// counts all notes regardless of status.
+func (db *DB) CountByStatus(ctx context.Context, status string) (int, error) {
+	var n int
+	if status == "" {
+		err := db.QueryRowContext(ctx, `SELECT count(*) FROM notes`).Scan(&n)
+		return n, err
+	}
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM notes WHERE status = ?`, status).Scan(&n)
+	return n, err
+}
+
 func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
 	res, err := db.ExecContext(ctx,
 		`UPDATE notes SET status = 'discarded' WHERE id = ? AND status != 'discarded'`, id)

@@ -94,7 +94,31 @@ var (
 	vocabClearAskBtn  = tele.InlineButton{Unique: "vocab_clr_ask"}   // show confirm
 	vocabClearYesBtn  = tele.InlineButton{Unique: "vocab_clr_yes"}   // confirm wipe
 	vocabClearNoBtn   = tele.InlineButton{Unique: "vocab_clr_no"}    // cancel wipe
+
+	pendingMoreBtn  = tele.InlineButton{Unique: "pending_more"}  // grow /pending list
+	recentMoreBtn   = tele.InlineButton{Unique: "recent_more"}   // grow /recent list
+	recentFilterBtn = tele.InlineButton{Unique: "recent_filter"} // status filter chip
 )
+
+// pendingPageSize / recentPageSize are the default visible windows. They
+// grow in pageSize increments on each "Show more" tap, capped at
+// maxListNotes to stay under Telegram's 4096-byte message limit.
+const (
+	pendingPageSize = 20
+	recentPageSize  = 10
+	maxListNotes    = 40
+)
+
+// validRecentFilter returns the canonical status string for the given
+// filter chip data. Empty = "all". Unknown = "all" (defensive).
+func validRecentFilter(s string) string {
+	switch s {
+	case "pending", "discarded":
+		return s
+	default:
+		return ""
+	}
+}
 
 func (tb *Bot) registerHandlers() {
 	tb.bot.Use(tb.allowOnly())
@@ -116,6 +140,9 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&vocabClearAskBtn, tb.cbVocabClearAsk)
 	tb.bot.Handle(&vocabClearYesBtn, tb.cbVocabClearYes)
 	tb.bot.Handle(&vocabClearNoBtn, tb.cbVocabClearNo)
+	tb.bot.Handle(&pendingMoreBtn, tb.cbPendingMore)
+	tb.bot.Handle(&recentMoreBtn, tb.cbRecentMore)
+	tb.bot.Handle(&recentFilterBtn, tb.cbRecentFilter)
 	tb.bot.Handle(tele.OnText, tb.onText)
 
 	tb.bot.Handle(tb.btnMenuPending, tb.cmdPending)
@@ -243,65 +270,101 @@ func (tb *Bot) errReply(c tele.Context, label string, err error) error {
 }
 
 func (tb *Bot) cmdPending(c tele.Context) error {
-	body, kb, err := tb.renderPending(context.Background())
+	body, kb, err := tb.renderPending(context.Background(), pendingPageSize)
 	if err != nil {
 		return tb.errReply(c, "list pending", err)
 	}
-	if kb == nil {
-		return c.Send(body)
-	}
-	return c.Send(body, kb)
+	return tb.sendList(c, body, kb)
 }
 
 func (tb *Bot) cmdRecent(c tele.Context) error {
-	body, kb, err := tb.renderRecent(context.Background())
+	body, kb, err := tb.renderRecent(context.Background(), "", recentPageSize)
 	if err != nil {
 		return tb.errReply(c, "list recent", err)
 	}
+	return tb.sendList(c, body, kb)
+}
+
+func (tb *Bot) sendList(c tele.Context, body string, kb *tele.ReplyMarkup) error {
 	if kb == nil {
 		return c.Send(body)
 	}
 	return c.Send(body, kb)
 }
 
-// renderPending returns the body text + inline keyboard for the /pending
-// view: each note gets a [🗑 #id] button. Discarded notes never appear here.
-func (tb *Bot) renderPending(ctx context.Context) (string, *tele.ReplyMarkup, error) {
+// clampPage caps requested limit at maxListNotes so the rendered message
+// stays under Telegram's 4096-byte limit.
+func clampPage(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > maxListNotes {
+		return maxListNotes
+	}
+	return n
+}
+
+// renderPending returns the body text + inline keyboard for /pending.
+// Each visible note gets a [🗑 #id] button. If more pending notes exist
+// beyond `limit`, a [Show more] row is appended.
+func (tb *Bot) renderPending(ctx context.Context, limit int) (string, *tele.ReplyMarkup, error) {
+	limit = clampPage(limit)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	notes, err := tb.db.ListPending(dbCtx, 20)
+	// Fetch one extra to detect "has more".
+	notes, err := tb.db.ListPending(dbCtx, limit+1)
 	if err != nil {
 		return "", nil, err
+	}
+	hasMore := len(notes) > limit
+	if hasMore {
+		notes = notes[:limit]
 	}
 	if len(notes) == 0 {
 		return tb.msg.EmptyList, nil, nil
 	}
 	body := tb.formatNotes(notes, false)
-	var row []tele.InlineButton
+	var actions []tele.InlineButton
 	for _, n := range notes {
 		b := discardPendingBtn
 		b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
 		b.Data = strconv.FormatInt(n.ID, 10)
-		row = append(row, b)
+		actions = append(actions, b)
 	}
-	return body, &tele.ReplyMarkup{InlineKeyboard: chunkButtons(row, 4)}, nil
+	rows := chunkButtons(actions, 4)
+	if hasMore && limit < maxListNotes {
+		more := pendingMoreBtn
+		more.Text = tb.msg.ShowMoreBtn
+		more.Data = strconv.Itoa(limit + pendingPageSize)
+		rows = append(rows, []tele.InlineButton{more})
+	}
+	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 }
 
-// renderRecent returns the body text + inline keyboard for /recent: each
-// note gets either a [🗑 #id] (pending/analyzed) or a [↩ #id] (discarded)
-// button so the user can flip status without leaving the list.
-func (tb *Bot) renderRecent(ctx context.Context) (string, *tele.ReplyMarkup, error) {
+// renderRecent returns the body text + inline keyboard for /recent. Top
+// row is the status filter chip group ([All]/[Pending]/[Discarded]); the
+// active chip is prefixed with FilterActiveMark. Each note gets a 🗑 or
+// ↩ button depending on its current status. [Show more] appended when
+// more rows exist beyond `limit` for the active filter.
+func (tb *Bot) renderRecent(ctx context.Context, filter string, limit int) (string, *tele.ReplyMarkup, error) {
+	filter = validRecentFilter(filter)
+	limit = clampPage(limit)
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	notes, err := tb.db.ListRecent(dbCtx, 10)
+	notes, err := tb.db.ListRecentByStatus(dbCtx, filter, limit+1)
 	if err != nil {
 		return "", nil, err
 	}
+	hasMore := len(notes) > limit
+	if hasMore {
+		notes = notes[:limit]
+	}
+	rows := [][]tele.InlineButton{tb.recentFilterRow(filter)}
 	if len(notes) == 0 {
-		return tb.msg.EmptyList, nil, nil
+		return tb.msg.EmptyList, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 	}
 	body := tb.formatNotes(notes, true)
-	var row []tele.InlineButton
+	var actions []tele.InlineButton
 	for _, n := range notes {
 		var b tele.InlineButton
 		if n.Status == db.StatusDiscarded {
@@ -312,9 +375,105 @@ func (tb *Bot) renderRecent(ctx context.Context) (string, *tele.ReplyMarkup, err
 			b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
 		}
 		b.Data = strconv.FormatInt(n.ID, 10)
-		row = append(row, b)
+		actions = append(actions, b)
 	}
-	return body, &tele.ReplyMarkup{InlineKeyboard: chunkButtons(row, 4)}, nil
+	rows = append(rows, chunkButtons(actions, 4)...)
+	if hasMore && limit < maxListNotes {
+		more := recentMoreBtn
+		more.Text = tb.msg.ShowMoreBtn
+		more.Data = filter + ":" + strconv.Itoa(limit+recentPageSize)
+		rows = append(rows, []tele.InlineButton{more})
+	}
+	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
+}
+
+// recentFilterRow returns the [All][Pending][Discarded] chip row with the
+// active filter visually marked.
+func (tb *Bot) recentFilterRow(active string) []tele.InlineButton {
+	mk := func(filter, label string) tele.InlineButton {
+		b := recentFilterBtn
+		if filter == active {
+			b.Text = tb.msg.FilterActiveMark + label
+		} else {
+			b.Text = label
+		}
+		b.Data = filter // empty for "all"
+		if filter == "" {
+			b.Data = "all"
+		}
+		return b
+	}
+	return []tele.InlineButton{
+		mk("", tb.msg.FilterAllBtn),
+		mk("pending", tb.msg.FilterPendingBtn),
+		mk("discarded", tb.msg.FilterDiscardedBtn),
+	}
+}
+
+func (tb *Bot) cbPendingMore(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(cb.Data))
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	body, kb, err := tb.renderPending(context.Background(), limit)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+// parseRecentData decodes "filter:limit" callback payload. Returns
+// (filter, limit). Defaults to ("", recentPageSize) on parse errors.
+func parseRecentData(s string) (string, int) {
+	parts := strings.SplitN(strings.TrimSpace(s), ":", 2)
+	filter := ""
+	if len(parts) > 0 && parts[0] != "all" {
+		filter = validRecentFilter(parts[0])
+	}
+	limit := recentPageSize
+	if len(parts) == 2 {
+		if n, err := strconv.Atoi(parts[1]); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	return filter, limit
+}
+
+func (tb *Bot) cbRecentMore(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	filter, limit := parseRecentData(cb.Data)
+	body, kb, err := tb.renderRecent(context.Background(), filter, limit)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
+}
+
+func (tb *Bot) cbRecentFilter(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(cb.Data)
+	filter := ""
+	if raw != "all" {
+		filter = validRecentFilter(raw)
+	}
+	body, kb, err := tb.renderRecent(context.Background(), filter, recentPageSize)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
+	}
+	tb.editWithList(c, body, kb)
+	return c.Respond()
 }
 
 // chunkButtons packs a flat button list into rows of width n. Telegram's
@@ -360,7 +519,7 @@ func (tb *Bot) cbDiscardPending(c tele.Context) error {
 		tb.logger.Error("cb discard pending", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
 	}
-	body, kb, err := tb.renderPending(ctx)
+	body, kb, err := tb.renderPending(ctx, pendingPageSize)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -383,7 +542,7 @@ func (tb *Bot) cbDiscardRecent(c tele.Context) error {
 		tb.logger.Error("cb discard recent", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("discard", err)})
 	}
-	body, kb, err := tb.renderRecent(ctx)
+	body, kb, err := tb.renderRecent(ctx, "", recentPageSize)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}
@@ -406,7 +565,7 @@ func (tb *Bot) cbRestoreRecent(c tele.Context) error {
 		tb.logger.Error("cb restore recent", "id", id, "err", err)
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("restore", err)})
 	}
-	body, kb, err := tb.renderRecent(ctx)
+	body, kb, err := tb.renderRecent(ctx, "", recentPageSize)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.Error("refresh", err)})
 	}

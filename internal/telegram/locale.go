@@ -46,15 +46,29 @@ type messages struct {
 	VocabYesBtn    string
 	VocabNoBtn     string
 	VocabAddPrompt string
+
+	ShowMoreBtn         string
+	FilterAllBtn        string
+	FilterPendingBtn    string
+	FilterDiscardedBtn  string
+	FilterActiveMark    string // prefix added to the currently active chip
 }
 
 var locales = map[string]messages{
 	"en": {
 		Help: "voicelog — send a voice message or audio file.\n\n" +
-			"/pending — last 20 pending notes\n" +
-			"/recent — last 10 notes (any status)\n" +
-			"/delete <id> — mark as discarded\n" +
-			"/vocab — manage whisper vocabulary (names, jargon, rare terms)",
+			"The buttons below the message are the primary path; the slash " +
+			"commands are kept as a fallback / for batch use.\n\n" +
+			"Buttons:\n" +
+			"📋 Pending / 🕘 Recent — open the list with per-note 🗑/↩ actions\n" +
+			"📒 Vocab — interactive vocabulary editor\n" +
+			"🗑 under any saved-note reply — discard that note in one tap\n\n" +
+			"Slash commands (fallback):\n" +
+			"/pending /recent — same lists\n" +
+			"/delete <id> — discard a note by id\n" +
+			"/vocab add <term> ... — batch add\n" +
+			"/vocab del <term> — remove one\n" +
+			"/vocab clear confirm — wipe vocabulary",
 		Recorded: func(id int64, p int) string {
 			return fmt.Sprintf("✓ saved #%d (%d pending)", id, p)
 		},
@@ -127,13 +141,27 @@ var locales = map[string]messages{
 		VocabYesBtn:    "✓ Yes, wipe",
 		VocabNoBtn:     "✗ Cancel",
 		VocabAddPrompt: "Send terms separated by spaces (reply to this message).",
+
+		ShowMoreBtn:        "⤵ Show more",
+		FilterAllBtn:       "All",
+		FilterPendingBtn:   "Pending",
+		FilterDiscardedBtn: "Discarded",
+		FilterActiveMark:   "• ",
 	},
 	"ru": {
 		Help: "voicelog — шли голосовое или аудио.\n\n" +
-			"/pending — последние 20 необработанных\n" +
-			"/recent — последние 10 (любой статус)\n" +
-			"/delete <id> — пометить как discarded\n" +
-			"/vocab — словарь whisper (имена, жаргон, редкие термины)",
+			"Основной путь — кнопки под сообщением. Текстовые команды " +
+			"оставлены как fallback / для batch.\n\n" +
+			"Кнопки:\n" +
+			"📋 Необработанные / 🕘 Последние — список с 🗑/↩ под каждой заметкой\n" +
+			"📒 Словарь — интерактивный редактор\n" +
+			"🗑 под ответом «✓ saved» — отбросить заметку в один тап\n\n" +
+			"Текстовые команды (fallback):\n" +
+			"/pending /recent — те же списки\n" +
+			"/delete <id> — отбросить по id\n" +
+			"/vocab add <term> ... — пакетное добавление\n" +
+			"/vocab del <term> — удалить одно\n" +
+			"/vocab clear confirm — очистить словарь",
 		Recorded: func(id int64, p int) string {
 			return fmt.Sprintf("✓ записано #%d (%d pending)", id, p)
 		},
@@ -206,6 +234,12 @@ var locales = map[string]messages{
 		VocabYesBtn:    "✓ Да, очистить",
 		VocabNoBtn:     "✗ Отмена",
 		VocabAddPrompt: "Пришли термины через пробел (ответом на это сообщение).",
+
+		ShowMoreBtn:        "⤵ Показать ещё",
+		FilterAllBtn:       "Все",
+		FilterPendingBtn:   "Необработанные",
+		FilterDiscardedBtn: "Отброшенные",
+		FilterActiveMark:   "• ",
 	},
 }
 
