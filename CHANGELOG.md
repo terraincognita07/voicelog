@@ -62,6 +62,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   the codebase relies on, and that `schema_migrations` matches the
   list of `*.sql` files exactly. Catches "added a column in code,
   forgot the migration" regressions before the first INSERT.
+- **`internal/diskguard` tests** — common test asserts
+  `FreeBytes(t.TempDir())` returns `(non-zero, nil)` on every
+  platform. Build-tagged tests cover the platform-specific surfaces:
+  on Unix the value must be a real Statfs reading (`< MaxUint64`)
+  and `FreeBytes("/no/such/path")` must surface the syscall error;
+  on non-Unix `FreeBytes` must return the `MaxUint64` sentinel for
+  any input. Removes the last `[no test files]` from
+  `go test ./...`.
 
 ### Fixed
 
