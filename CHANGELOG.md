@@ -56,6 +56,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   within 2s of ctx cancel even though their tickers are configured
   for hours/days (cancel must unblock the select on `ctx.Done()`
   directly).
+- **Migration bootstrap test** — `TestMigrateBootstrap` in
+  `internal/db/db_test.go` verifies that after a fresh `Migrate`
+  call the DB has every table, column, FTS5 trigger, and index that
+  the codebase relies on, and that `schema_migrations` matches the
+  list of `*.sql` files exactly. Catches "added a column in code,
+  forgot the migration" regressions before the first INSERT.
 
 ### Fixed
 

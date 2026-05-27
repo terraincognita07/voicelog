@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -117,6 +118,187 @@ func countMigrationFiles() (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// TestMigrateBootstrap is the "did the migration suite leave the DB in
+// the expected shape?" guard. Catches regressions where a column or
+// table gets referenced in code but the corresponding migration is
+// missing — Go would still build, tests would fail on first INSERT
+// instead of telling you the schema is incomplete.
+//
+// Subtests assert progressively narrower properties:
+//   - applied_migrations count == migration file count
+//   - applied names match file names exactly
+//   - expected tables are present
+//   - notes carries every column the codebase relies on
+//   - FTS5 triggers are present (notes_ai / notes_ad / notes_au)
+//   - migration 004 (notes_history) and 005 (audio_hash) created indexes
+func TestMigrateBootstrap(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	t.Run("schema_migrations matches files", func(t *testing.T) {
+		want, err := listMigrationFilenames()
+		if err != nil {
+			t.Fatalf("list files: %v", err)
+		}
+		got, err := listAppliedMigrations(ctx, d)
+		if err != nil {
+			t.Fatalf("list applied: %v", err)
+		}
+		if !stringSlicesEqual(want, got) {
+			t.Errorf("applied vs files:\n  files=%v\n  applied=%v", want, got)
+		}
+	})
+
+	t.Run("expected tables present", func(t *testing.T) {
+		wantTables := []string{
+			"notes",
+			"notes_fts",
+			"notes_history",
+			"schema_migrations",
+			"vocabulary",
+		}
+		for _, name := range wantTables {
+			if !objectExists(ctx, t, d, "table", name) {
+				// notes_fts is a virtual table — SQLite reports it as
+				// type 'table' in sqlite_master, so the same query works.
+				t.Errorf("table %q missing", name)
+			}
+		}
+	})
+
+	t.Run("notes columns complete", func(t *testing.T) {
+		wantCols := []string{
+			"id",
+			"created_at",
+			"raw_text",
+			"duration_sec",
+			"audio_path",
+			"status",
+			"confidence_overall",
+			"confidence_min",
+			"suspect_hallucination",
+			"audio_hash",
+		}
+		got, err := tableColumns(ctx, d, "notes")
+		if err != nil {
+			t.Fatalf("PRAGMA table_info: %v", err)
+		}
+		for _, c := range wantCols {
+			if _, ok := got[c]; !ok {
+				t.Errorf("notes is missing column %q (have %v)", c, sortedKeys(got))
+			}
+		}
+	})
+
+	t.Run("FTS5 triggers present", func(t *testing.T) {
+		wantTriggers := []string{"notes_ai", "notes_ad", "notes_au"}
+		for _, name := range wantTriggers {
+			if !objectExists(ctx, t, d, "trigger", name) {
+				t.Errorf("trigger %q missing", name)
+			}
+		}
+	})
+
+	t.Run("expected indexes present", func(t *testing.T) {
+		wantIdx := []string{
+			"idx_notes_created",
+			"idx_notes_status",
+			"idx_notes_history_note",
+			"idx_notes_audio_hash",
+		}
+		for _, name := range wantIdx {
+			if !objectExists(ctx, t, d, "index", name) {
+				t.Errorf("index %q missing", name)
+			}
+		}
+	})
+}
+
+func listMigrationFilenames() ([]string, error) {
+	entries, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".sql" {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func listAppliedMigrations(ctx context.Context, d *db.DB) ([]string, error) {
+	rows, err := d.QueryContext(ctx, `SELECT name FROM schema_migrations ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func objectExists(ctx context.Context, t *testing.T, d *db.DB, kind, name string) bool {
+	t.Helper()
+	var found string
+	err := d.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type = ? AND name = ?`,
+		kind, name).Scan(&found)
+	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return false
+		}
+		t.Fatalf("sqlite_master lookup %s/%s: %v", kind, name, err)
+	}
+	return found == name
+}
+
+func tableColumns(ctx context.Context, d *db.DB, table string) (map[string]struct{}, error) {
+	rows, err := d.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func TestInsertAndFTSSearch(t *testing.T) {
