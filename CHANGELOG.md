@@ -92,6 +92,27 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **README split into `docs/`.** Top-level `README.md` went from
+  658 to 249 lines — overview, Why-this-exists, the differentiation
+  table, the Documentation index, Architecture, Quick start
+  (sections 1–5 + Claude Code exposure), and License/Acknowledge-
+  ments. Everything else moved under `docs/`:
+  - `docs/CONFIG.md` — every env var, defaults, rotation guidance.
+  - `docs/USAGE.md` — Telegram commands and inline UI.
+  - `docs/MCP.md` — tool reference + Claude.ai web exposure
+    (nginx and Traefik recipes, token-in-URL tradeoff).
+  - `docs/SECURITY-MODEL.md` — threat model AND the "what is NOT
+    protected" boundary (was the longest section in README).
+  - `docs/OPERATIONS.md` — backups, model swap, DB maintenance,
+    debugging the common-startup-failures list.
+  - `docs/RUN-LOCALLY.md` — dev loop, project layout, Makefile
+    targets, running without Docker.
+  - `docs/ROADMAP.md` was added in the previous commit.
+  External links to old README anchors will break — acceptable for
+  a v0.1.x repo with no known external linkers.
+
+### Changed
+
 - **`retranscribe` refuses discarded notes.** Previously the MCP tool
   would silently overwrite a discarded note's text. Now it returns an
   error hinting the caller to `restore_note` first. Mirrors the
