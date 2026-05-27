@@ -289,10 +289,10 @@ func (tb *Bot) sendList(c tele.Context, body string, kb *tele.ReplyMarkup) error
 // reflects current state after a tap.
 func (tb *Bot) editWithList(c tele.Context, body string, kb *tele.ReplyMarkup) {
 	if kb == nil {
-		_ = c.Edit(body)
+		tb.tryEdit(c, body)
 		return
 	}
-	_ = c.Edit(body, kb)
+	tb.tryEdit(c, body, kb)
 }
 
 // chunkButtons packs a flat button list into rows of width n. Telegram's
@@ -627,7 +627,7 @@ func (tb *Bot) cbPendingClearAsk(c tele.Context) error {
 	no.Text = tb.msg.ClearAllNoBtn
 	no.Data = encoded
 	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
-	_ = c.Edit(tb.msg.ClearAllAsk(n), kb)
+	tb.tryEdit(c, tb.msg.ClearAllAsk(n), kb)
 	return c.Respond()
 }
 

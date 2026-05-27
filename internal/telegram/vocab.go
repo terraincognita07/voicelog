@@ -177,10 +177,10 @@ func (tb *Bot) sendVocabWithPrefix(c tele.Context, ctx context.Context, prefix s
 
 func (tb *Bot) editWithVocab(c tele.Context, body string, kb *tele.ReplyMarkup) {
 	if kb == nil {
-		_ = c.Edit(body)
+		tb.tryEdit(c, body)
 		return
 	}
-	_ = c.Edit(body, kb)
+	tb.tryEdit(c, body, kb)
 }
 
 func (tb *Bot) cbVocabRemove(c tele.Context) error {
@@ -222,7 +222,7 @@ func (tb *Bot) cbVocabClearAsk(c tele.Context) error {
 	no := vocabClearNoBtn
 	no.Text = tb.msg.VocabNoBtn
 	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
-	_ = c.Edit(tb.msg.VocabClearAsk(len(terms)), kb)
+	tb.tryEdit(c, tb.msg.VocabClearAsk(len(terms)), kb)
 	return c.Respond()
 }
 

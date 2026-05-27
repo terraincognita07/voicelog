@@ -6,19 +6,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 type Client struct {
-	URL  string
-	HTTP *http.Client
+	URL    string
+	HTTP   *http.Client
+	Logger *slog.Logger // optional; only used for warn-once on missing segments
+
+	noSegmentsWarnOnce sync.Once
 }
 
+// New returns a default Client. Logger stays nil — set it via the
+// public field if you want the warn-once "no segments" notice. The
+// bot and the MCP retranscribe tool both wire their respective
+// loggers in cmd/{bot,mcp}/main.go after calling whisper.New.
 func New(url string) *Client {
 	return &Client{
 		URL:  url,
@@ -131,6 +140,17 @@ func (c *Client) transcribeWAV(ctx context.Context, path, prompt string) (Result
 	var r Result
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
 		return Result{}, fmt.Errorf("decode json: %w", err)
+	}
+	// One-time operator notice: if the server replied without per-segment
+	// metadata, confidence detection is silently disabled for every
+	// subsequent transcription. Most often this means whisper.cpp was
+	// started without response_format support for verbose_json or with
+	// an older build. Logging once avoids drowning the bot's slog stream.
+	if len(r.Segments) == 0 && c.Logger != nil {
+		c.noSegmentsWarnOnce.Do(func() {
+			c.Logger.Warn("whisper response has no segments — confidence detection disabled for this process",
+				"url", c.URL)
+		})
 	}
 	return r, nil
 }

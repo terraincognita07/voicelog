@@ -108,6 +108,7 @@ func main() {
 	}
 
 	w := whisper.New(whisperURL)
+	w.Logger = logger // enables one-time "no segments" warning
 
 	bot, err := telegram.New(token, telegram.Config{
 		Locale:              locale,

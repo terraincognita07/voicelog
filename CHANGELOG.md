@@ -71,6 +71,31 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   any input. Removes the last `[no test files]` from
   `go test ./...`.
 
+### Added
+
+- **Whisper warn-once for missing segments.** `whisper.Client` gains
+  an optional `Logger` field (wired by `cmd/bot` and `cmd/mcp`). When
+  a response decodes with no `segments[]`, the client emits a single
+  `sync.Once`-guarded Warn per process lifetime — operators see that
+  confidence detection is disabled (typical cause: whisper.cpp not
+  returning `verbose_json`) without log spam. Tests:
+  `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
+  `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
+
+### Changed
+
+- **`retranscribe` refuses discarded notes.** Previously the MCP tool
+  would silently overwrite a discarded note's text. Now it returns an
+  error hinting the caller to `restore_note` first. Mirrors the
+  "discarded = forget this" signal the bot's UI already respects.
+  Covered by `TestRetranscribe_RefusesDiscarded`.
+- **Telegram `c.Edit` failures are no longer swallowed.** The
+  previous `_ = c.Edit(...)` callsites now route through
+  `tb.tryEdit(...)`, which logs Warn on any error that's not
+  Telegram's benign `"message is not modified"`. Same UX on the
+  happy path; real failures (network drop, message-too-old, invalid
+  markup) now appear in the slog stream.
+
 ### Fixed
 
 - **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply

@@ -17,6 +17,7 @@ import (
 
 	"voicelog/internal/db"
 	"voicelog/internal/mcp"
+	"voicelog/internal/whisper"
 	"voicelog/migrations"
 )
 
@@ -407,6 +408,27 @@ func TestRetranscribe_UnavailableWithoutWhisper(t *testing.T) {
 	msg := expectToolError(t, tcr)
 	if !strings.Contains(strings.ToLower(msg), "unavailable") {
 		t.Errorf("error should mention 'unavailable': %q", msg)
+	}
+}
+
+func TestRetranscribe_RefusesDiscarded(t *testing.T) {
+	// Wire a non-nil Whisper client so the "unavailable" branch
+	// doesn't short-circuit before the discard check. The client is
+	// never actually called — the discarded guard returns first.
+	deps := mcp.RetranscribeDeps{Whisper: &whisper.Client{}}
+	f := newFixtureWith(t, deps)
+	id := seedNote(t, f.store, time.Now(), "to be discarded")
+	if _, err := f.store.DiscardNotes(context.Background(), []int64{id}); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+
+	tcr := callTool(t, f, "retranscribe", map[string]any{"id": float64(id)})
+	msg := expectToolError(t, tcr)
+	if !strings.Contains(strings.ToLower(msg), "discarded") {
+		t.Errorf("error should mention 'discarded', got %q", msg)
+	}
+	if !strings.Contains(strings.ToLower(msg), "restore") {
+		t.Errorf("error should hint at restore_note, got %q", msg)
 	}
 }
 

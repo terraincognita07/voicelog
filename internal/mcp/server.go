@@ -451,6 +451,13 @@ func registerRetranscribe(s *server.MCPServer, store *db.DB, deps RetranscribeDe
 			logger.Error("retranscribe: get note", "id", id, "err", err)
 			return mcpsdk.NewToolResultError("could not load note"), nil
 		}
+		// Refuse to overwrite a note the user explicitly marked as
+		// "forget this". They can restore_note first if this was a
+		// mistake. Cheaper than a force parameter and avoids
+		// silently resurrecting discarded content.
+		if note.Status == db.StatusDiscarded {
+			return mcpsdk.NewToolResultError(fmt.Sprintf("note %d is discarded — call restore_note first if you really want to overwrite its text", id)), nil
+		}
 		if !note.AudioPath.Valid || note.AudioPath.String == "" {
 			return mcpsdk.NewToolResultError(fmt.Sprintf("note %d has no retained audio — enable AUDIO_RETENTION_DAYS or pick a younger note", id)), nil
 		}

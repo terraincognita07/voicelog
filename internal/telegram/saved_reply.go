@@ -84,13 +84,13 @@ func (tb *Bot) cbDiscard(c tele.Context) error {
 	defer cancel()
 	if err := tb.db.MarkDiscarded(ctx, id); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
-			_ = c.Edit(tb.msg.NotFound(id))
+			tb.tryEdit(c, tb.msg.NotFound(id))
 			return c.Respond()
 		}
 		return tb.errToast(c, "discard", err)
 	}
 	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	_ = c.Edit(tb.msg.DiscardedReply(id, preview), tb.savedMarkup(id, true, truncated))
+	tb.tryEdit(c, tb.msg.DiscardedReply(id, preview), tb.savedMarkup(id, true, truncated))
 	return c.Respond()
 }
 
@@ -109,13 +109,13 @@ func (tb *Bot) cbSavedRestore(c tele.Context) error {
 	defer cancel()
 	if _, err := tb.db.RestoreNote(ctx, id); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
-			_ = c.Edit(tb.msg.NotFound(id))
+			tb.tryEdit(c, tb.msg.NotFound(id))
 			return c.Respond()
 		}
 		return tb.errToast(c, "restore", err)
 	}
 	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	_ = c.Edit(tb.msg.RestoredReply(id, preview), tb.savedMarkup(id, false, truncated))
+	tb.tryEdit(c, tb.msg.RestoredReply(id, preview), tb.savedMarkup(id, false, truncated))
 	return c.Respond()
 }
 
@@ -139,7 +139,7 @@ func (tb *Bot) cbSavedFull(c tele.Context) error {
 	n, err := tb.db.GetNote(ctx, id)
 	if err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
-			_ = c.Edit(tb.msg.NotFound(id))
+			tb.tryEdit(c, tb.msg.NotFound(id))
 			return c.Respond()
 		}
 		return tb.errToast(c, "refresh", err)
@@ -156,7 +156,7 @@ func (tb *Bot) cbSavedFull(c tele.Context) error {
 		// pending count; they're stale anyway).
 		body = "📖 #" + strconv.FormatInt(id, 10) + "\n\n«" + full + "»"
 	}
-	_ = c.Edit(body, tb.savedMarkup(id, discarded, false))
+	tb.tryEdit(c, body, tb.savedMarkup(id, discarded, false))
 	return c.Respond()
 }
 

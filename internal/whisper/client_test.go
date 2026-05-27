@@ -1,9 +1,11 @@
 package whisper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -219,6 +221,49 @@ func TestTranscribeWAV_PlainJSONNoSegments(t *testing.T) {
 	_, _, _, ok := r.Aggregate(0.6)
 	if ok {
 		t.Errorf("Aggregate must return ok=false on missing segments")
+	}
+}
+
+// TestTranscribeWAV_WarnsOnceOnMissingSegments verifies the operator
+// notice fires exactly once per *Client lifetime when the server
+// keeps returning responses without per-segment metadata.
+func TestTranscribeWAV_WarnsOnceOnMissingSegments(t *testing.T) {
+	var cap capturedRequest
+	srv := fakeServer(t, http.StatusOK, `{"text":"silent"}`, &cap)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := &Client{URL: srv.URL, HTTP: srv.Client(), Logger: logger}
+
+	for i := 0; i < 3; i++ {
+		if _, err := c.transcribeWAV(context.Background(), writeTempWAV(t, "x"), ""); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	got := strings.Count(buf.String(), "no segments")
+	if got != 1 {
+		t.Errorf("warn-once: want exactly 1 'no segments' log entry across 3 calls, got %d (full log: %q)", got, buf.String())
+	}
+}
+
+// TestTranscribeWAV_DoesNotWarnOnSegmentsPresent: the warn-once must
+// stay quiet when the server replies with segments. Regression guard
+// against a refactor that triggers the once even on the success path.
+func TestTranscribeWAV_DoesNotWarnOnSegmentsPresent(t *testing.T) {
+	body, _ := json.Marshal(Result{
+		Text:     "ok",
+		Segments: []Segment{{AvgLogprob: -0.1, NoSpeechProb: 0.0}},
+	})
+	var cap capturedRequest
+	srv := fakeServer(t, http.StatusOK, string(body), &cap)
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := &Client{URL: srv.URL, HTTP: srv.Client(), Logger: logger}
+
+	if _, err := c.transcribeWAV(context.Background(), writeTempWAV(t, "x"), ""); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if strings.Contains(buf.String(), "no segments") {
+		t.Errorf("must not warn when segments are present: %q", buf.String())
 	}
 }
 

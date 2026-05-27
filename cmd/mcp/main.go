@@ -57,6 +57,7 @@ func main() {
 	var deps mcp.RetranscribeDeps
 	if whisperURL := os.Getenv("WHISPER_URL"); whisperURL != "" {
 		deps.Whisper = whisper.New(whisperURL)
+		deps.Whisper.Logger = logger // enables one-time "no segments" warning
 		deps.BasePrompt = os.Getenv("WHISPER_PROMPT")
 		deps.HallucinationThresh = config.ParseFloat01(logger, "HALLUCINATION_THRESHOLD", 0.6)
 		// audio_path is stored relative to AUDIO_DIR for new notes.
