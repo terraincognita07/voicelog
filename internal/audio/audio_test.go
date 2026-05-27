@@ -45,12 +45,15 @@ func TestSaveOriginal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	want := filepath.Join(dest, "42.oga")
-	if got != want {
-		t.Errorf("returned path: want %q, got %q", want, got)
+	// Post-F3: SaveOriginal returns the RELATIVE path (basename only).
+	// The absolute on-disk location is dest/<id>.oga, resolved by Resolve
+	// at read time.
+	const wantRel = "42.oga"
+	if got != wantRel {
+		t.Errorf("returned rel path: want %q, got %q", wantRel, got)
 	}
-	// File contents must match.
-	f, err := os.Open(got)
+	onDisk := filepath.Join(dest, got)
+	f, err := os.Open(onDisk)
 	if err != nil {
 		t.Fatalf("open dest: %v", err)
 	}
@@ -62,10 +65,35 @@ func TestSaveOriginal(t *testing.T) {
 	// Perms must be 0600 owner-only — only meaningful on Unix; Windows
 	// reports a constant 0666 for files and ignores the mode argument.
 	if runtime.GOOS != "windows" {
-		info, _ := os.Stat(got)
+		info, _ := os.Stat(onDisk)
 		if info.Mode().Perm() != 0o600 {
 			t.Errorf("perm: want 0600, got %#o", info.Mode().Perm())
 		}
+	}
+}
+
+func TestResolve(t *testing.T) {
+	dir := filepath.Join(string(os.PathSeparator)+"data", "audio")
+	cases := []struct {
+		name, audioDir, stored, want string
+	}{
+		{"empty stored", dir, "", ""},
+		{"relative basename", dir, "42.oga", filepath.Join(dir, "42.oga")},
+		{"relative subpath", dir, filepath.Join("subdir", "9.oga"), filepath.Join(dir, "subdir", "9.oga")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Resolve(c.audioDir, c.stored)
+			if got != c.want {
+				t.Errorf("Resolve(%q, %q) = %q, want %q", c.audioDir, c.stored, got, c.want)
+			}
+		})
+	}
+	// Absolute legacy paths must round-trip unchanged regardless of
+	// audioDir. Use t.TempDir() so the path is platform-native absolute.
+	legacy := filepath.Join(t.TempDir(), "legacy.oga")
+	if got := Resolve(dir, legacy); got != legacy {
+		t.Errorf("Resolve abs legacy: want unchanged %q, got %q", legacy, got)
 	}
 }
 
@@ -101,6 +129,9 @@ func TestPathInside(t *testing.T) {
 	}
 }
 
+// TestJanitor_DeletesOldOnly exercises the legacy absolute-path code
+// path. Pre-F3 notes have absolute audio_path values; the janitor must
+// still process them when they fall under the current managed dir.
 func TestJanitor_DeletesOldOnly(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
@@ -142,6 +173,92 @@ func TestJanitor_DeletesOldOnly(t *testing.T) {
 	gotFresh, _ := d.GetNote(ctx, freshNote)
 	if !gotFresh.AudioPath.Valid || gotFresh.AudioPath.String != freshPath {
 		t.Errorf("fresh note audio_path lost: %+v", gotFresh.AudioPath)
+	}
+}
+
+// TestJanitor_RelativePath_NewFormat is the post-F3 happy path: stored
+// audio_path is a basename, janitor joins it under dirAbs at read time
+// and successfully removes the file.
+func TestJanitor_RelativePath_NewFormat(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	dirAbs, _ := filepath.Abs(dir)
+
+	now := time.Now()
+	id := insertWithTimestamp(t, d, now.Add(-72*time.Hour), "old text")
+
+	// SaveOriginal's contract: file at dir/<id>.oga, return basename.
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "src.oga")
+	writeFile(t, src, "payload")
+	rel, err := SaveOriginal(src, dir, id)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if filepath.IsAbs(rel) {
+		t.Fatalf("SaveOriginal must return relative path, got %q", rel)
+	}
+	if err := d.SetAudioPath(ctx, id, rel); err != nil {
+		t.Fatalf("set path: %v", err)
+	}
+
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	runOnce(ctx, d, dirAbs, 2, logger)
+
+	onDisk := filepath.Join(dirAbs, rel)
+	if _, err := os.Stat(onDisk); !os.IsNotExist(err) {
+		t.Errorf("file should be deleted at resolved path %q; stat err=%v", onDisk, err)
+	}
+	got, _ := d.GetNote(ctx, id)
+	if got.AudioPath.Valid {
+		t.Errorf("audio_path should be nulled; got %q", got.AudioPath.String)
+	}
+}
+
+// TestJanitor_AudioDirChange_RelativeFollowsDir is the F3 fix in
+// action. A note is written with one audioDir, then read by the janitor
+// running against a DIFFERENT audioDir. With relative paths, the file
+// in the NEW dir is resolved correctly. (Compare to legacy absolute
+// paths, which would leak — exercised by TestJanitor_RefusesPathOutsideDir.)
+func TestJanitor_AudioDirChange_RelativeFollowsDir(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+
+	now := time.Now()
+	id := insertWithTimestamp(t, d, now.Add(-72*time.Hour), "old text")
+
+	// Write in the OLD dir, set DB to the relative basename only.
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "src.oga")
+	writeFile(t, src, "payload")
+	rel, err := SaveOriginal(src, oldDir, id)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := d.SetAudioPath(ctx, id, rel); err != nil {
+		t.Fatalf("set path: %v", err)
+	}
+
+	// Operator changes AUDIO_DIR. Janitor runs against newDir. The OLD
+	// file (in oldDir) is now unreachable through audio_path — that's
+	// expected. But we ALSO place a file at newDir/<rel> to confirm the
+	// janitor resolves to the active dir and removes from THERE.
+	newOnDisk := filepath.Join(newDir, rel)
+	writeFile(t, newOnDisk, "payload in new dir")
+
+	newDirAbs, _ := filepath.Abs(newDir)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	runOnce(ctx, d, newDirAbs, 2, logger)
+
+	if _, err := os.Stat(newOnDisk); !os.IsNotExist(err) {
+		t.Errorf("file in new dir should be deleted; stat err=%v", err)
+	}
+	got, _ := d.GetNote(ctx, id)
+	if got.AudioPath.Valid {
+		t.Errorf("audio_path should be nulled; got %q", got.AudioPath.String)
 	}
 }
 

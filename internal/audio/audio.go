@@ -33,15 +33,24 @@ import (
 // initial bot init.
 const JanitorPeriod = 6 * time.Hour
 
-// SaveOriginal copies src to dst/<id>.oga. dst is created if missing.
+// SaveOriginal copies src to dir/<id>.oga. dir is created if missing.
 // File permissions: 0600 (owner read+write only). The on-disk extension
 // is fixed as .oga regardless of source extension — Telegram voice
 // messages are always Opus-in-OGG.
+//
+// Returns the RELATIVE path (the basename, "<id>.oga"), not an absolute
+// one. Callers should resolve it against the active audio dir via
+// Resolve when they need to touch the file. Storing relative paths in
+// notes.audio_path means a later AUDIO_DIR change no longer abandons
+// retained files — the new dir is applied at read time. (Closes F3 for
+// newly-written notes; legacy absolute rows keep working through
+// Resolve's backward-compat branch.)
 func SaveOriginal(srcPath, dir string, id int64) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir audio dir: %w", err)
 	}
-	destPath := filepath.Join(dir, strconv.FormatInt(id, 10)+".oga")
+	rel := strconv.FormatInt(id, 10) + ".oga"
+	destPath := filepath.Join(dir, rel)
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return "", fmt.Errorf("open src: %w", err)
@@ -57,7 +66,22 @@ func SaveOriginal(srcPath, dir string, id int64) (string, error) {
 		_ = os.Remove(destPath)
 		return "", fmt.Errorf("copy audio: %w", err)
 	}
-	return destPath, nil
+	return rel, nil
+}
+
+// Resolve returns the absolute on-disk path for a value stored in
+// notes.audio_path. Relative values (new format, post-F3) are joined
+// under audioDir. Absolute values (legacy, pre-F3 rows) are returned
+// as-is so they remain reachable even if AUDIO_DIR has changed since
+// they were written.
+func Resolve(audioDir, storedPath string) string {
+	if storedPath == "" {
+		return ""
+	}
+	if filepath.IsAbs(storedPath) {
+		return storedPath
+	}
+	return filepath.Join(audioDir, storedPath)
 }
 
 // Janitor runs until ctx is cancelled, performing periodic cleanup of
@@ -103,15 +127,19 @@ func runOnce(ctx context.Context, store *db.DB, dirAbs string, retentionDays int
 	}
 	deleted := 0
 	for _, r := range refs {
-		if !pathInside(dirAbs, r.Path) {
+		// Stored path may be relative (new) or absolute (legacy). Resolve
+		// against the active dir before any filesystem touch.
+		resolved := Resolve(dirAbs, r.Path)
+		if !pathInside(dirAbs, resolved) {
 			// Defensive: drop the DB pointer; do NOT touch the file.
+			// Legacy absolute paths under a previous AUDIO_DIR land here.
 			logger.Warn("audio janitor: skipping path outside managed dir",
-				"id", r.ID, "path", r.Path)
+				"id", r.ID, "stored", r.Path, "resolved", resolved)
 			_ = store.ClearAudioPath(ctx, r.ID)
 			continue
 		}
-		if err := os.Remove(r.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logger.Warn("audio janitor: remove failed", "id", r.ID, "path", r.Path, "err", err)
+		if err := os.Remove(resolved); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.Warn("audio janitor: remove failed", "id", r.ID, "path", resolved, "err", err)
 			continue
 		}
 		if err := store.ClearAudioPath(ctx, r.ID); err != nil {

@@ -9,12 +9,27 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
-### Open
+### Fixed
 
-- F1 (MED) — concurrent migration race on fresh DB (`internal/db/db.go`).
-- F2 (MED) — per-file migration not atomic (`internal/db/db.go`).
-- F3 (MED) — audio janitor abandons files when `AUDIO_DIR` changes mid-life
-  (`internal/audio/audio.go`).
+- **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply
+  loop in `BEGIN IMMEDIATE` on a dedicated `*sql.Conn`. Concurrent
+  runners (bot + mcp on a fresh DB) serialize on SQLite's RESERVED
+  lock; per-file failures roll back together with the
+  `schema_migrations` row so re-runs are clean. Guarded by
+  `TestMigrateConcurrent` in `internal/db/db_test.go`.
+- **F3 (MED → resolved for new rows):** `notes.audio_path` is written
+  as a basename relative to `AUDIO_DIR`. Read sites (janitor, MCP
+  retranscribe) resolve via `audio.Resolve`, which falls back to legacy
+  absolute paths unchanged. New `RetranscribeDeps.AudioDir`; `cmd/mcp`
+  picks up `AUDIO_DIR` (same default as the bot). Data migration for
+  historical absolute rows deferred — see `.agents/context/todo.md`.
+- **Startup Open race on fresh DB (LOW → resolved):** `db.Open` now
+  retries `PingContext` with exponential backoff (~3.15s budget) on
+  `SQLITE_BUSY`. Two concurrent processes hitting a fresh DB file used
+  to collide on the `journal_mode=WAL` pragma write before
+  `busy_timeout` was effective; first deploy of bot+mcp under
+  docker-compose could restart-loop. Distinct from F1/F2 (which were
+  about `Migrate`); same user-visible symptom.
 
 ## [0.3.0] — 2026-05-28
 

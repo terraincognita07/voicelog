@@ -12,6 +12,7 @@ import (
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"voicelog/internal/audio"
 	"voicelog/internal/db"
 	"voicelog/internal/whisper"
 )
@@ -20,10 +21,16 @@ import (
 // retranscribe tool. nil-or-zero means the tool is registered but will
 // return an "audio retention disabled" error to the caller — the rest
 // of the MCP surface works regardless.
+//
+// AudioDir is where the bot stores retained audio files. Used to
+// resolve relative audio_path values (the post-F3 format) before
+// handing the path to whisper. Empty string means MCP can only reach
+// notes that still hold legacy absolute paths.
 type RetranscribeDeps struct {
 	Whisper             *whisper.Client
 	BasePrompt          string
 	HallucinationThresh float64
+	AudioDir            string
 }
 
 const (
@@ -447,8 +454,9 @@ func registerRetranscribe(s *server.MCPServer, store *db.DB, deps RetranscribeDe
 			return mcpsdk.NewToolResultError(fmt.Sprintf("note %d has no retained audio — enable AUDIO_RETENTION_DAYS or pick a younger note", id)), nil
 		}
 
+		audioPath := audio.Resolve(deps.AudioDir, note.AudioPath.String)
 		prompt := composePrompt(ctx, store, deps.BasePrompt)
-		result, err := deps.Whisper.Transcribe(ctx, note.AudioPath.String, prompt)
+		result, err := deps.Whisper.Transcribe(ctx, audioPath, prompt)
 		if err != nil {
 			logger.Error("retranscribe: whisper", "id", id, "err", err)
 			return mcpsdk.NewToolResultError("whisper failed — see server logs"), nil

@@ -68,6 +68,13 @@ func main() {
 			}
 			deps.HallucinationThresh = f
 		}
+		// audio_path is stored relative to AUDIO_DIR for new notes.
+		// Same default as cmd/bot so the two containers agree out of
+		// the box; operators who change AUDIO_DIR must set it in both.
+		deps.AudioDir = os.Getenv("AUDIO_DIR")
+		if deps.AudioDir == "" {
+			deps.AudioDir = "/data/audio"
+		}
 	}
 
 	mcpServer := mcp.NewServer(store, deps, logger)

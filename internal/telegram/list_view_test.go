@@ -36,6 +36,18 @@ func newTestBot(t *testing.T) *Bot {
 	}
 }
 
+// calendarYesterday returns a Time on the *calendar* day before now, in
+// now's location, at 23:00 local. Use this instead of
+// `now.Add(-25*time.Hour)` when seeding "yesterday" notes — fixed-offset
+// arithmetic slips into the day-before-yesterday whenever a test runs
+// during the first hour of a new day, which used to flake
+// TestRenderPending_MultiDayCollapsed.
+func calendarYesterday(now time.Time) time.Time {
+	y, m, d := now.Date()
+	startOfToday := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	return startOfToday.Add(-1 * time.Hour)
+}
+
 // seedNoteAt inserts a note with a controlled created_at timestamp.
 // Returns the new note ID.
 func seedNoteAt(t *testing.T, b *Bot, when time.Time, text string) int64 {
@@ -129,7 +141,10 @@ func TestRenderPending_MultiDayCollapsed(t *testing.T) {
 	tb := newTestBot(t)
 	now := time.Now()
 	seedNoteAt(t, tb, now.Add(-30*time.Second), "today1")
-	yesterday := now.Add(-25 * time.Hour)
+	// Calendar yesterday at 23:00 local. Subtracting a fixed 25h slid into
+	// the day-before-yesterday when the test ran in the first hour of a
+	// new day, breaking the "yesterday" group key.
+	yesterday := calendarYesterday(now)
 	seedNoteAt(t, tb, yesterday, "yesterday1")
 	seedNoteAt(t, tb, yesterday.Add(-1*time.Minute), "yesterday2")
 
@@ -162,7 +177,7 @@ func TestRenderPending_ExpandYesterday(t *testing.T) {
 	tb := newTestBot(t)
 	now := time.Now()
 	seedNoteAt(t, tb, now.Add(-30*time.Second), "today1")
-	yesterday := now.Add(-25 * time.Hour)
+	yesterday := calendarYesterday(now)
 	idY := seedNoteAt(t, tb, yesterday, "yesterday1")
 
 	expDay := yesterday.Format("2006-01-02")
