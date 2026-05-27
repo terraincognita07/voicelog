@@ -9,6 +9,15 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Added
+
+- **Startup audio housekeeping** (bot only): after `Migrate`, the bot
+  runs `audio.RelativizeLegacyPaths` (one-shot normalization of
+  pre-F3 absolute `audio_path` rows that point under the current
+  `AUDIO_DIR`) and `audio.ScanOrphans` (Warn-level log for `*.oga`
+  files in `AUDIO_DIR` with no matching DB row). Both are read-mostly,
+  idempotent, and skipped when retention is disabled.
+
 ### Fixed
 
 - **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply
@@ -17,12 +26,13 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   lock; per-file failures roll back together with the
   `schema_migrations` row so re-runs are clean. Guarded by
   `TestMigrateConcurrent` in `internal/db/db_test.go`.
-- **F3 (MED → resolved for new rows):** `notes.audio_path` is written
-  as a basename relative to `AUDIO_DIR`. Read sites (janitor, MCP
-  retranscribe) resolve via `audio.Resolve`, which falls back to legacy
-  absolute paths unchanged. New `RetranscribeDeps.AudioDir`; `cmd/mcp`
-  picks up `AUDIO_DIR` (same default as the bot). Data migration for
-  historical absolute rows deferred — see `.agents/context/todo.md`.
+- **F3 (MED → fully resolved):** `notes.audio_path` is written as a
+  basename relative to `AUDIO_DIR` for new rows; legacy absolute rows
+  that point under the current `AUDIO_DIR` are normalized at startup
+  by `audio.RelativizeLegacyPaths`. Read sites (janitor, MCP
+  retranscribe) go through `audio.Resolve`, which still accepts both
+  formats as a backward-compat fallback. New `RetranscribeDeps.AudioDir`;
+  `cmd/mcp` picks up `AUDIO_DIR` (same default as the bot).
 - **Startup Open race on fresh DB (LOW → resolved):** `db.Open` now
   retries `PingContext` with exponential backoff (~3.15s budget) on
   `SQLITE_BUSY`. Two concurrent processes hitting a fresh DB file used

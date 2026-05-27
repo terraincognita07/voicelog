@@ -290,6 +290,134 @@ func TestJanitor_RefusesPathOutsideDir(t *testing.T) {
 	}
 }
 
+func TestRelativizeLegacyPaths(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	dirAbs, _ := filepath.Abs(dir)
+	otherDir := t.TempDir()
+	otherAbs, _ := filepath.Abs(otherDir)
+
+	// Seed four scenarios:
+	//   1. row with NULL audio_path        — must be ignored
+	//   2. row with relative path          — already in new format, skip
+	//   3. row with abs inside current dir — rewrite to basename
+	//   4. row with abs OUTSIDE current dir — leave alone
+	null := insertWithTimestamp(t, d, time.Now(), "no audio")
+	_ = null
+
+	relRow := insertWithTimestamp(t, d, time.Now(), "already relative")
+	if err := d.SetAudioPath(ctx, relRow, "42.oga"); err != nil {
+		t.Fatalf("set relRow: %v", err)
+	}
+
+	insideRow := insertWithTimestamp(t, d, time.Now(), "abs inside")
+	insidePath := filepath.Join(dirAbs, "100.oga")
+	if err := d.SetAudioPath(ctx, insideRow, insidePath); err != nil {
+		t.Fatalf("set insideRow: %v", err)
+	}
+
+	outsideRow := insertWithTimestamp(t, d, time.Now(), "abs outside")
+	outsidePath := filepath.Join(otherAbs, "200.oga")
+	if err := d.SetAudioPath(ctx, outsideRow, outsidePath); err != nil {
+		t.Fatalf("set outsideRow: %v", err)
+	}
+
+	n, err := RelativizeLegacyPaths(ctx, d, dirAbs)
+	if err != nil {
+		t.Fatalf("relativize: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("rewritten count: want 1 (insideRow only), got %d", n)
+	}
+
+	// Verify final state per row.
+	if got, _ := d.GetNote(ctx, relRow); got.AudioPath.String != "42.oga" {
+		t.Errorf("relRow audio_path: want %q (unchanged), got %q", "42.oga", got.AudioPath.String)
+	}
+	if got, _ := d.GetNote(ctx, insideRow); got.AudioPath.String != "100.oga" {
+		t.Errorf("insideRow audio_path: want %q (normalized to basename), got %q", "100.oga", got.AudioPath.String)
+	}
+	if got, _ := d.GetNote(ctx, outsideRow); got.AudioPath.String != outsidePath {
+		t.Errorf("outsideRow audio_path: want %q (unchanged), got %q", outsidePath, got.AudioPath.String)
+	}
+
+	// Idempotency: a second pass should normalize zero rows.
+	n2, err := RelativizeLegacyPaths(ctx, d, dirAbs)
+	if err != nil {
+		t.Fatalf("relativize 2nd pass: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("idempotency violated: second pass rewrote %d rows", n2)
+	}
+}
+
+func TestRelativizeLegacyPaths_EmptyDir(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	// audioDir == "" means retention disabled — bail without touching DB.
+	n, err := RelativizeLegacyPaths(ctx, d, "")
+	if err != nil {
+		t.Fatalf("err for empty dir: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("rewritten: want 0 for empty audioDir, got %d", n)
+	}
+}
+
+func TestScanOrphans(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	dirAbs, _ := filepath.Abs(dir)
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+
+	// Seed three files on disk: two known (relative + abs-inside) and
+	// two orphans. Subdir contents should be ignored.
+	writeFile(t, filepath.Join(dirAbs, "1.oga"), "known relative")
+	writeFile(t, filepath.Join(dirAbs, "2.oga"), "known absolute")
+	writeFile(t, filepath.Join(dirAbs, "orphan-a.oga"), "no DB row")
+	writeFile(t, filepath.Join(dirAbs, "orphan-b.oga"), "also no DB row")
+	writeFile(t, filepath.Join(dirAbs, "notes.txt"), "non-oga ignored")
+	if err := os.MkdirAll(filepath.Join(dirAbs, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dirAbs, "sub", "nested.oga"), "subdir ignored")
+
+	id1 := insertWithTimestamp(t, d, time.Now(), "known relative")
+	if err := d.SetAudioPath(ctx, id1, "1.oga"); err != nil {
+		t.Fatal(err)
+	}
+	id2 := insertWithTimestamp(t, d, time.Now(), "known absolute")
+	if err := d.SetAudioPath(ctx, id2, filepath.Join(dirAbs, "2.oga")); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := ScanOrphans(ctx, d, dirAbs, logger)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("orphan count: want 2 (orphan-a + orphan-b), got %d", n)
+	}
+}
+
+func TestScanOrphans_MissingDir(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	// Pass a path that doesn't exist — should be treated as "0 orphans"
+	// not an error, so first-run before any file lands is fine.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	n, err := ScanOrphans(ctx, d, missing, logger)
+	if err != nil {
+		t.Fatalf("expected nil err for missing dir, got %v", err)
+	}
+	if n != 0 {
+		t.Errorf("orphans: want 0 for missing dir, got %d", n)
+	}
+}
+
 // insertWithTimestamp inserts a note with a controlled created_at so the
 // janitor's cutoff logic can be exercised deterministically.
 func insertWithTimestamp(t *testing.T, d *db.DB, when time.Time, text string) int64 {

@@ -400,6 +400,30 @@ func (db *DB) AudiosOlderThan(ctx context.Context, cutoff time.Time) ([]AudioRef
 	return out, rows.Err()
 }
 
+// AllRetainedAudios returns every (id, path) pair where audio_path IS
+// NOT NULL — no time filter. Used by startup tasks (F3 legacy path
+// normalize, orphan scan) that need to enumerate ALL retained audio,
+// not just the janitor's cleanup window.
+func (db *DB) AllRetainedAudios(ctx context.Context) ([]AudioRef, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, audio_path FROM notes
+		WHERE audio_path IS NOT NULL
+		ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AudioRef
+	for rows.Next() {
+		var r AudioRef
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // HealthReport summarizes the result of a quick DB integrity check.
 type HealthReport struct {
 	IntegrityCheck string `json:"integrity_check"`

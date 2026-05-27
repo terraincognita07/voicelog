@@ -84,6 +84,111 @@ func Resolve(audioDir, storedPath string) string {
 	return filepath.Join(audioDir, storedPath)
 }
 
+// RelativizeLegacyPaths is a one-shot startup pass that rewrites legacy
+// absolute audio_path values to the relative basename format, but only
+// where the absolute path resolves under the current audioDir. Rows
+// already in relative format are left alone (idempotent). Rows whose
+// absolute path lies OUTSIDE the current dir are also left alone — we
+// have nothing better to point them at, and the janitor's "outside
+// managed dir" branch will null them on its next sweep.
+//
+// Returns the number of rows actually rewritten. Safe to call on every
+// startup; safe to call concurrently with the janitor (each row's
+// SetAudioPath is its own UPDATE).
+func RelativizeLegacyPaths(ctx context.Context, store *db.DB, audioDir string) (int, error) {
+	if audioDir == "" {
+		return 0, nil
+	}
+	dirAbs, err := filepath.Abs(audioDir)
+	if err != nil {
+		return 0, fmt.Errorf("abs audio dir: %w", err)
+	}
+	refs, err := store.AllRetainedAudios(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list retained audios: %w", err)
+	}
+	rewritten := 0
+	for _, r := range refs {
+		if !filepath.IsAbs(r.Path) {
+			continue // already relative — nothing to do
+		}
+		// Stored path is absolute (legacy). Only rewrite if it's INSIDE
+		// the current audioDir; rows pointing elsewhere stay legacy.
+		rel, err := filepath.Rel(dirAbs, r.Path)
+		if err != nil {
+			continue
+		}
+		if rel == "." || rel == "" || (len(rel) >= 2 && rel[:2] == "..") {
+			continue
+		}
+		if err := store.SetAudioPath(ctx, r.ID, rel); err != nil {
+			return rewritten, fmt.Errorf("set audio_path id=%d: %w", r.ID, err)
+		}
+		rewritten++
+	}
+	return rewritten, nil
+}
+
+// ScanOrphans walks audioDir for *.oga files and counts those that are
+// NOT referenced by any notes.audio_path row. Each orphan is logged at
+// Warn level (with path). Does not delete anything — operator decides.
+//
+// Common causes for orphans: DB was rebuilt from scratch but the audio
+// dir was preserved; operator copied a backup of AUDIO_DIR into a new
+// deploy; manual file drop. ScanOrphans is read-only and runs once at
+// startup, after RelativizeLegacyPaths so the comparison happens
+// against the post-normalize state.
+//
+// Returns the orphan count for the startup banner.
+func ScanOrphans(ctx context.Context, store *db.DB, audioDir string, logger *slog.Logger) (int, error) {
+	if audioDir == "" {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(audioDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil // not created yet; not an error
+		}
+		return 0, fmt.Errorf("read audio dir: %w", err)
+	}
+	dirAbs, err := filepath.Abs(audioDir)
+	if err != nil {
+		return 0, fmt.Errorf("abs audio dir: %w", err)
+	}
+
+	// Build a set of basenames known to the DB, resolved against the
+	// current dir so relative AND absolute-inside-dir rows both match.
+	refs, err := store.AllRetainedAudios(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list retained audios: %w", err)
+	}
+	known := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		resolved := Resolve(dirAbs, r.Path)
+		if pathInside(dirAbs, resolved) {
+			known[filepath.Base(resolved)] = struct{}{}
+		}
+	}
+
+	orphans := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if filepath.Ext(name) != ".oga" {
+			continue
+		}
+		if _, ok := known[name]; ok {
+			continue
+		}
+		logger.Warn("audio retain: orphan file (no matching notes.audio_path)",
+			"file", filepath.Join(dirAbs, name))
+		orphans++
+	}
+	return orphans, nil
+}
+
 // Janitor runs until ctx is cancelled, performing periodic cleanup of
 // retained audio files that have aged past retentionDays.
 //

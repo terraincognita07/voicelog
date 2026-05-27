@@ -95,6 +95,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Audio retention housekeeping. Only meaningful when audioDir is
+	// set (retention enabled). Both passes are read-mostly and safe to
+	// run on every startup.
+	if audioDir != "" {
+		if n, err := audio.RelativizeLegacyPaths(ctx, store, audioDir); err != nil {
+			logger.Warn("audio retain: relativize legacy paths failed", "err", err)
+		} else if n > 0 {
+			logger.Info("audio retain: relativized legacy abs paths", "count", n)
+		}
+		if n, err := audio.ScanOrphans(ctx, store, audioDir, logger); err != nil {
+			logger.Warn("audio retain: orphan scan failed", "err", err)
+		} else if n > 0 {
+			logger.Warn("audio retain: orphan files found in AUDIO_DIR (not deleted; review manually)", "count", n)
+		}
+	}
+
 	w := whisper.New(whisperURL)
 
 	bot, err := telegram.New(token, telegram.Config{
