@@ -21,16 +21,31 @@ func registerDBHealth(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		mcpsdk.WithDescription("Run SQLite's integrity_check + quick_check, then report note count and "+
 			"on-disk size. integrity_check / quick_check return the literal string \"ok\" on a healthy "+
 			"DB; anything else is a real corruption signal. Cheap on a small DB — safe to call ad-hoc "+
-			"(say, weekly) to verify the backup is still readable."),
+			"(say, weekly) to verify the backup is still readable. Pass quick=true on a multi-GB DB "+
+			"to skip the slow full integrity_check; quick_check still runs."),
 		mcpsdk.WithReadOnlyHintAnnotation(true),
 		mcpsdk.WithDestructiveHintAnnotation(false),
 		mcpsdk.WithIdempotentHintAnnotation(true),
 		mcpsdk.WithOpenWorldHintAnnotation(false),
+		mcpsdk.WithBoolean("quick",
+			mcpsdk.Description("If true, skip the full integrity_check (which can take >30s on a multi-GB DB) and only run quick_check + count + size. Default false."),
+		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// Pick the right deadline based on what the caller asked for.
+		// integrity_check (the default, slow path) gets 30s; quick mode
+		// only needs ~2s for quick_check + counts.
+		quick := false
+		if v, err := req.RequireBool("quick"); err == nil {
+			quick = v
+		}
+		timeout := 30 * time.Second
+		if quick {
+			timeout = 2 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		rep, err := store.Health(ctx)
+		rep, err := store.Health(ctx, quick)
 		if err != nil {
 			logger.Error("db_health", "err", err)
 			return mcpsdk.NewToolResultError(err.Error()), nil

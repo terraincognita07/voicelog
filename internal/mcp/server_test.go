@@ -446,6 +446,24 @@ func TestDBHealth(t *testing.T) {
 	}
 }
 
+// TestDBHealth_QuickSkipsIntegrity asserts the quick=true branch:
+// integrity_check is the literal "skipped" sentinel, quick_check
+// still runs and reports "ok", and the rest of the payload comes
+// through. This is the path operators take on a multi-GB DB where
+// the full integrity scan would blow past the tool timeout.
+func TestDBHealth_QuickSkipsIntegrity(t *testing.T) {
+	f := newFixture(t)
+	tcr := callTool(t, f, "db_health", map[string]any{"quick": true})
+	var got map[string]any
+	decodePayload(t, tcr, &got)
+	if got["integrity_check"] != "skipped" {
+		t.Errorf("integrity_check: want %q, got %v", "skipped", got["integrity_check"])
+	}
+	if got["quick_check"] != "ok" {
+		t.Errorf("quick_check: want %q, got %v", "ok", got["quick_check"])
+	}
+}
+
 // --- Sanity ------------------------------------------------------------
 
 func TestUnauthorizedHasWWWAuthenticate(t *testing.T) {

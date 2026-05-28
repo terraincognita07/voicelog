@@ -62,6 +62,18 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **`db_health` MCP tool gains a `quick` parameter.** Setting
+  `quick=true` skips the slow full `PRAGMA integrity_check` (which can
+  take >30s on a multi-GB DB) and runs only `quick_check` + count +
+  size. The `integrity_check` field then returns the sentinel
+  `"skipped"` so a caller can distinguish "not run" from a real
+  corruption message. Tool timeout shrinks from 30s to 2s in quick
+  mode. `db.Health(ctx)` became `db.Health(ctx, quickOnly bool)`.
+- **MCP `NewServer` registers tools via a table.** The 9 inline
+  `register*` calls are now a `[]registrar` slice — one line per
+  tool, easier to scan than a constructor body. `retranscribe`
+  stays outside the table because its signature includes
+  `RetranscribeDeps`.
 - **`composePrompt` extracted to `internal/promptbuilder`.** Both the
   bot's live-transcription path and the MCP `retranscribe` tool now
   call `promptbuilder.Compose(ctx, src, basePrompt, logger)`. Unifies

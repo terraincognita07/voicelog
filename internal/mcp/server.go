@@ -67,20 +67,30 @@ func toMCP(n db.Note) mcpNote {
 // retranscribe is registered unconditionally; if RetranscribeDeps.Whisper
 // is nil (i.e. the operator didn't wire whisper into mcp), calls return
 // a clear error rather than panicking.
+//
+// Tools are listed in a registrar table so adding a new one is a one-
+// line change in the right column instead of touching the constructor
+// body. retranscribe stays out of the table because it takes deps;
+// every other tool only needs (store, logger).
 func NewServer(store *db.DB, deps RetranscribeDeps, logger *slog.Logger) *server.MCPServer {
 	s := server.NewMCPServer(serverName, serverVersion,
 		server.WithToolCapabilities(true),
 	)
 
-	registerListPending(s, store, logger)
-	registerGetRange(s, store, logger)
-	registerSearch(s, store, logger)
-	registerMarkAnalyzed(s, store, logger)
-	registerGetNote(s, store, logger)
-	registerDiscardNotes(s, store, logger)
-	registerRestoreNote(s, store, logger)
-	registerRetranscribe(s, store, deps, logger)
-	registerDBHealth(s, store, logger)
+	type registrar func(s *server.MCPServer, store *db.DB, logger *slog.Logger)
+	for _, register := range []registrar{
+		registerListPending,
+		registerGetRange,
+		registerSearch,
+		registerGetNote,
+		registerMarkAnalyzed,
+		registerDiscardNotes,
+		registerRestoreNote,
+		registerDBHealth,
+	} {
+		register(s, store, logger)
+	}
+	registerRetranscribe(s, store, deps, logger) // distinct signature — keep outside the table
 
 	return s
 }

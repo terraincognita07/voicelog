@@ -40,11 +40,14 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
   flip a single discarded note back to `pending`. Returns
   `{restored: bool}` — `true` if it was discarded and got restored,
   `false` if it exists but was not in `discarded` state.
-- **`db_health()`** —
+- **`db_health(quick?: bool = false)`** —
   runs SQLite `PRAGMA integrity_check` + `quick_check`, then reports
   `note_count` and `db_size_bytes`. Healthy DB: both checks return the
   literal `"ok"`. Cheap on the typical voicelog DB — safe to invoke
-  ad-hoc (e.g. weekly: "how's my DB?").
+  ad-hoc (e.g. weekly: "how's my DB?"). Pass `quick=true` on a
+  multi-GB DB to skip the full page-scan integrity_check (which can
+  take >30s); `integrity_check` then returns the sentinel `"skipped"`
+  and `quick_check` still runs.
 - **`retranscribe(id: int)`** —
   re-run whisper on the note's retained audio file (requires
   `AUDIO_RETENTION_DAYS > 0` on the bot side, AND the note's audio still

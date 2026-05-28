@@ -567,7 +567,7 @@ func TestHealth(t *testing.T) {
 	_, _ = d.InsertNote(ctx, "one", 1)
 	_, _ = d.InsertNote(ctx, "two", 1)
 
-	rep, err := d.Health(ctx)
+	rep, err := d.Health(ctx, false)
 	if err != nil {
 		t.Fatalf("health: %v", err)
 	}
@@ -579,6 +579,32 @@ func TestHealth(t *testing.T) {
 	}
 	if rep.NoteCount != 2 {
 		t.Errorf("note_count: want 2, got %d", rep.NoteCount)
+	}
+	if rep.DBSizeBytes <= 0 {
+		t.Errorf("db_size_bytes should be > 0, got %d", rep.DBSizeBytes)
+	}
+}
+
+// TestHealthQuickOnly asserts the quickOnly=true branch: the full
+// integrity_check is skipped (IntegrityCheck = IntegrityCheckSkipped),
+// quick_check still runs, the rest of the report is populated.
+func TestHealthQuickOnly(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	_, _ = d.InsertNote(ctx, "one", 1)
+
+	rep, err := d.Health(ctx, true)
+	if err != nil {
+		t.Fatalf("health quick: %v", err)
+	}
+	if rep.IntegrityCheck != db.IntegrityCheckSkipped {
+		t.Errorf("integrity_check: want %q, got %q", db.IntegrityCheckSkipped, rep.IntegrityCheck)
+	}
+	if rep.QuickCheck != "ok" {
+		t.Errorf("quick_check: want ok, got %q", rep.QuickCheck)
+	}
+	if rep.NoteCount != 1 {
+		t.Errorf("note_count: want 1, got %d", rep.NoteCount)
 	}
 	if rep.DBSizeBytes <= 0 {
 		t.Errorf("db_size_bytes should be > 0, got %d", rep.DBSizeBytes)
