@@ -49,6 +49,20 @@ gate.
    `/pending` shows it; call the `db_health` MCP tool and confirm
    `integrity_check = "ok"`. This catches integration regressions
    that unit tests can miss.
+
+   For the MCP side specifically, `scripts/smoke-mcp.sh` walks every
+   read-only tool against a live server and asserts JSON-RPC envelope
+   shape. Run it after `docker compose up -d`:
+
+   ```bash
+   MCP_TOKEN="$(grep ^MCP_TOKEN= .env | cut -d= -f2)" \
+   MCP_URL=http://127.0.0.1:8081/mcp \
+   bash scripts/smoke-mcp.sh
+   ```
+
+   To exercise the mutating tools (`mark_analyzed` / `discard_notes` /
+   `restore_note`) without leaving side effects beyond one history
+   row, pass `--mutate` and `NOTE_ID=<id>` for a real seed note.
 5. **CHANGELOG accuracy.** Read `[Unreleased]` end-to-end. Anything
    shipped since the previous tag that is *user-visible* (env-var,
    MCP tool, bot UI, docs file moved) must be listed. Drop entries

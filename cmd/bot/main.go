@@ -13,6 +13,7 @@ import (
 	"voicelog/internal/config"
 	"voicelog/internal/db"
 	"voicelog/internal/db/migrations"
+	"voicelog/internal/diag"
 	"voicelog/internal/telegram"
 	"voicelog/internal/whisper"
 )
@@ -78,6 +79,15 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Optional pprof. Empty PPROF_ADDR = disabled (default). Refuses any
+	// non-loopback bind — use an SSH tunnel for remote profiling.
+	pprofStop, err := diag.StartPprof(os.Getenv("PPROF_ADDR"), logger)
+	if err != nil {
+		logger.Error("pprof", "err", err)
+		os.Exit(1)
+	}
+	defer pprofStop(context.Background())
 
 	store, err := db.Open(ctx, dbPath)
 	if err != nil {

@@ -22,6 +22,7 @@ missing; optional ones fall back to defaults documented below.
 | `DB_MAINTENANCE_DISABLED` | no | — | When set to any non-empty value, the mcp container skips its weekly WAL checkpoint + monthly VACUUM loop. Use only if you run maintenance externally. |
 | `HOST_UID` | no | `1000` | UID of bot/mcp processes — must own `./data` on host |
 | `HOST_GID` | no | `1000` | GID of bot/mcp processes — must own `./data` on host |
+| `PPROF_ADDR` | no | — | When set to a loopback `host:port` (e.g. `127.0.0.1:6060`), starts `net/http/pprof` on that address for the binary. Any non-loopback bind is refused at startup. Unset = disabled (production default). |
 
 ## Notes
 
@@ -36,3 +37,10 @@ missing; optional ones fall back to defaults documented below.
   `MIN_FREE_DISK_MB`, the bot refuses NEW captures cleanly (with a
   user-visible message) instead of letting SQLite hit a no-space
   error half-way through an INSERT. Set to `0` to disable in dev.
+- **`PPROF_ADDR` is loopback-only by design.** pprof endpoints expose
+  goroutine stacks, allocation sites, and source line info (via
+  `/debug/pprof/symbol`) — effectively read-only RCE surface if
+  reached by a stranger. The startup check refuses `:6060`,
+  `0.0.0.0:N`, public IPs, and arbitrary hostnames; only `localhost`,
+  `127.0.0.0/8`, and `[::1]` pass. For remote profiling, SSH-tunnel
+  to the bound port instead.
