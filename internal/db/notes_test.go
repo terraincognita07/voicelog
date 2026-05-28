@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"voicelog/internal/db"
-	"voicelog/migrations"
+	"voicelog/internal/db/migrations"
 )
 
 func TestInsertAndList(t *testing.T) {

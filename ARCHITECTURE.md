@@ -59,9 +59,10 @@ Strict — enforced by review, not by build:
 ## Persistence
 
 - SQLite + FTS5 + WAL mode.
-- Schema lives in `migrations/NNN_name.sql`, applied forward-only via
-  `internal/db/db.go::Migrate`. A `schema_migrations` table tracks applied
-  filenames so non-idempotent statements (`ALTER ADD COLUMN`) run exactly once.
+- Schema lives in `internal/db/migrations/NNN_name.sql`, applied
+  forward-only via `internal/db/db.go::Migrate`. A `schema_migrations`
+  table tracks applied filenames so non-idempotent statements
+  (`ALTER ADD COLUMN`) run exactly once.
 - All queries are parameterized. FTS5 MATCH passes user input as a bind value.
 - The `notes` table is the only mutable state worth backing up; `vocabulary`
   and `notes_history` are nice-to-have. `./data/voicelog.db` (+ `-wal` + `-shm`)
@@ -88,7 +89,9 @@ encoding fits.
 
 ## MCP surface
 
-Server: `internal/mcp/server.go`. Eleven tools as of 2026-05-28:
+Server: `internal/mcp/server.go` (constructor + helpers); tools live
+in `tools_read.go` / `tools_mutate.go` / `tools_retranscribe.go`.
+Nine tools as of 2026-05-28:
 
 | Tool | Mutating? | Notes |
 |---|---|---|
@@ -126,8 +129,11 @@ deliberately out of scope.
 
 - Bug in the bot UI → start at `internal/telegram/list_view.go` or
   `saved_reply.go`.
-- Bug in an MCP tool → start at `internal/mcp/server.go`.
-- Schema change → start with a new `migrations/NNN_name.sql`, then add
-  read/write helpers to `internal/db`.
+- Bug in an MCP tool → open the appropriate file under `internal/mcp/`:
+  `tools_read.go` for read-only tools, `tools_mutate.go` for DB writers,
+  `tools_retranscribe.go` for the whisper-dependent tool. Shared helpers
+  live in `server.go`.
+- Schema change → start with a new `internal/db/migrations/NNN_name.sql`,
+  then add read/write helpers to `internal/db`.
 - Whisper-side change → `internal/whisper/client.go` + `Result.Aggregate`.
 - New tests → next to the file under test (`foo_test.go` beside `foo.go`).

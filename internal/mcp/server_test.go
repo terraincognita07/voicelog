@@ -18,7 +18,7 @@ import (
 	"voicelog/internal/db"
 	"voicelog/internal/mcp"
 	"voicelog/internal/whisper"
-	"voicelog/migrations"
+	"voicelog/internal/db/migrations"
 )
 
 const testToken = "abcdefghijklmnopqrst"

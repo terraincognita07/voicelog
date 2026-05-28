@@ -24,17 +24,11 @@ internal/
   telegram/              # bot handlers and user gate
   mcp/                   # MCP tool registrations + BearerAuth
   db/                    # SQLite + FTS5 + migrations runner
+    migrations/          # forward-only NNN_name.sql + embed.FS
   audio/                 # opt-in retention (SaveOriginal + Janitor + Resolve)
   config/                # MustEnv + ParseFloat01 for cmd/*
   diskguard/             # build-tagged free-space probe (unix/other)
   promptbuilder/         # composes whisper "initial prompt" from base + vocab
-migrations/
-  001_init.sql           # schema with FTS5 triggers
-  002_vocab.sql          # vocabulary table
-  003_confidence.sql     # confidence/hallucination columns
-  004_notes_history.sql  # archive for retranscribe
-  005_audio_hash.sql     # dedup column
-  migrations.go          # embed.FS
 scripts/
   fetch-model.sh         # download a whisper ggml model
   whisper-smoke.sh       # local smoke test against whisper-server

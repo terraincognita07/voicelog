@@ -14,7 +14,7 @@ import (
 	"voicelog/internal/db"
 	"voicelog/internal/telegram"
 	"voicelog/internal/whisper"
-	"voicelog/migrations"
+	"voicelog/internal/db/migrations"
 )
 
 func main() {

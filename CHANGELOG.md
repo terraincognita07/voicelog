@@ -92,6 +92,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **`migrations/` moved to `internal/db/migrations/`.** The migration
+  runner (`db.Migrate`) lives in `internal/db`; the SQL files it
+  embeds now sit next to it, following Go's "package owns its
+  resources" convention. Embed pattern stayed `*.sql` (relative).
+  Seven importers swapped `voicelog/migrations` → `voicelog/internal/db/migrations`.
+  Top-level root no longer has a `migrations/` directory.
 - **`internal/mcp/server.go` split by tool family.** 542 → 128 lines
   in `server.go` (NewServer + shared helpers — `toMCP`, `jsonResult`,
   `toInt64Slice`, plus the `mcpNote` wire type). New same-package

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"voicelog/internal/db"
-	"voicelog/migrations"
+	"voicelog/internal/db/migrations"
 )
 
 func openTestDB(t *testing.T) *db.DB {
