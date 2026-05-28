@@ -78,17 +78,17 @@ func TestValidDateKey(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
-		{"2026-05-26", "2026-05-26"},      // happy path
-		{"2026-02-28", "2026-02-28"},      // non-leap February valid
-		{"2026-02-29", ""},                // not a leap year — invalid
-		{"2024-02-29", "2024-02-29"},      // leap year — valid
-		{"2026-13-99", ""},                // out-of-range month + day
-		{"garbage", ""},                   // free-form garbage
-		{"", ""},                          // empty stays empty
-		{"  2026-05-26  ", "2026-05-26"},  // surrounding whitespace tolerated
-		{"2026-5-26", ""},                 // missing zero-padding rejected
-		{"26-05-2026", ""},                // wrong order rejected
-		{string([]byte{0xff, 0xfe}), ""},  // non-utf8 bytes
+		{"2026-05-26", "2026-05-26"},     // happy path
+		{"2026-02-28", "2026-02-28"},     // non-leap February valid
+		{"2026-02-29", ""},               // not a leap year — invalid
+		{"2024-02-29", "2024-02-29"},     // leap year — valid
+		{"2026-13-99", ""},               // out-of-range month + day
+		{"garbage", ""},                  // free-form garbage
+		{"", ""},                         // empty stays empty
+		{"  2026-05-26  ", "2026-05-26"}, // surrounding whitespace tolerated
+		{"2026-5-26", ""},                // missing zero-padding rejected
+		{"26-05-2026", ""},               // wrong order rejected
+		{string([]byte{0xff, 0xfe}), ""}, // non-utf8 bytes
 	}
 	for _, c := range cases {
 		if got := validDateKey(c.in); got != c.want {
@@ -124,11 +124,11 @@ func TestClampPage(t *testing.T) {
 	cases := []struct {
 		in, want int
 	}{
-		{-100, 1},                // negative clamps up to 1
-		{-1, 1},                  // -1 clamps up to 1
-		{0, 1},                   // 0 clamps up to 1
-		{1, 1},                   // 1 passes through
-		{20, 20},                 // typical page size unchanged
+		{-100, 1},                        // negative clamps up to 1
+		{-1, 1},                          // -1 clamps up to 1
+		{0, 1},                           // 0 clamps up to 1
+		{1, 1},                           // 1 passes through
+		{20, 20},                         // typical page size unchanged
 		{maxListNotes, maxListNotes},     // exactly at cap is fine
 		{maxListNotes + 1, maxListNotes}, // just past cap clamps down
 		{99999, maxListNotes},            // far past cap clamps down

@@ -21,6 +21,12 @@ type Client struct {
 	HTTP   *http.Client
 	Logger *slog.Logger // optional; only used for warn-once on missing segments
 
+	// toWAV converts srcPath to a 16 kHz mono WAV at dst. Default
+	// implementation shells out to ffmpeg; tests inject a stub so the
+	// outer Transcribe can be exercised without the binary on PATH.
+	// Unexported so the public API stays small.
+	toWAV func(ctx context.Context, src, dst string) error
+
 	noSegmentsWarnOnce sync.Once
 }
 
@@ -30,8 +36,9 @@ type Client struct {
 // loggers in cmd/{bot,mcp}/main.go after calling whisper.New.
 func New(url string) *Client {
 	return &Client{
-		URL:  url,
-		HTTP: &http.Client{Timeout: 10 * time.Minute},
+		URL:   url,
+		HTTP:  &http.Client{Timeout: 10 * time.Minute},
+		toWAV: ffmpegToWAV,
 	}
 }
 
@@ -72,15 +79,21 @@ type Result struct {
 // metadata. Servers that don't recognize that value will fall back to
 // plain JSON; the parser tolerates either.
 func (c *Client) Transcribe(ctx context.Context, srcPath, prompt string) (Result, error) {
+	conv := c.toWAV
+	if conv == nil {
+		// Defensive default: hand-built Clients (tests, retranscribe) that
+		// skipped New() still get a working converter.
+		conv = ffmpegToWAV
+	}
 	wavPath := srcPath + ".wav"
-	if err := toWAV(ctx, srcPath, wavPath); err != nil {
+	if err := conv(ctx, srcPath, wavPath); err != nil {
 		return Result{}, fmt.Errorf("ffmpeg convert: %w", err)
 	}
 	defer os.Remove(wavPath)
 	return c.transcribeWAV(ctx, wavPath, prompt)
 }
 
-func toWAV(ctx context.Context, src, dst string) error {
+func ffmpegToWAV(ctx context.Context, src, dst string) error {
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-y", "-loglevel", "error",
 		"-i", src,

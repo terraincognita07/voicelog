@@ -34,14 +34,31 @@ type Note struct {
 // NULL) for the "old whisper" or "no segments" case — distinct from a
 // real 0.0 confidence. AudioHash is "" when the caller doesn't want to
 // store one (e.g. tests, retranscribe).
+//
+// DedupWindowSec, when > 0 AND AudioHash != "", turns InsertNoteWithMeta
+// into a race-safe upsert: the INSERT is conditional on no row with the
+// same audio_hash existing within the last DedupWindowSec seconds. Two
+// concurrent inserts serialize through SQLite's WAL write lock, so the
+// second sees the first's row and skips. The caller gets the surviving
+// row's id back alongside ErrDuplicateAudio.
 type NoteMeta struct {
 	ConfidenceOverall    *float64
 	ConfidenceMin        *float64
 	SuspectHallucination bool
 	AudioHash            string
+	DedupWindowSec       int64
 }
 
-var ErrNoteNotFound = errors.New("note not found")
+var (
+	ErrNoteNotFound = errors.New("note not found")
+
+	// ErrDuplicateAudio is returned by InsertNoteWithMeta when the
+	// UNIQUE constraint on audio_hash (migration 006) trips. Callers
+	// that handed in a non-empty AudioHash get back the existing
+	// note's id alongside this error so they can render a duplicate-
+	// detected reply without an extra round-trip.
+	ErrDuplicateAudio = errors.New("duplicate audio_hash")
+)
 
 // MaxNotesInRange caps GetNotesInRange to prevent unbounded result sets
 // (memory blow-up if an MCP client supplies an extremely wide window).
@@ -72,14 +89,60 @@ func (db *DB) InsertNoteWithMeta(ctx context.Context, rawText string, durationSe
 	if meta.SuspectHallucination {
 		suspect = 1
 	}
+	ts := time.Now().Unix()
+
+	// Fast path: no dedup window requested OR no hash supplied. The
+	// conditional INSERT below only earns its complexity when both are
+	// set (= the bot's normal voice-message flow).
+	if meta.DedupWindowSec <= 0 || meta.AudioHash == "" {
+		res, err := db.ExecContext(ctx, `
+			INSERT INTO notes (created_at, raw_text, duration_sec,
+			                   confidence_overall, confidence_min, suspect_hallucination,
+			                   audio_hash)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			ts, rawText, durationSec, overall, worst, suspect, hash)
+		if err != nil {
+			return 0, err
+		}
+		return res.LastInsertId()
+	}
+
+	// Race-safe dedup INSERT. SQLite's WAL mode serializes writers, so
+	// two concurrent calls with the same hash see each other's rows
+	// through the NOT EXISTS subquery — the second one's WHERE clause
+	// evaluates to false and zero rows are inserted. We then look up
+	// the surviving row and return its id with ErrDuplicateAudio.
+	//
+	// Stale resends (same bytes, but the older note is outside the
+	// dedup window) still go through because the WHERE clause filters
+	// the subquery by created_at >= cutoff.
+	cutoff := ts - meta.DedupWindowSec
 	res, err := db.ExecContext(ctx, `
 		INSERT INTO notes (created_at, raw_text, duration_sec,
 		                   confidence_overall, confidence_min, suspect_hallucination,
 		                   audio_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().Unix(), rawText, durationSec, overall, worst, suspect, hash)
+		SELECT ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM notes
+			WHERE audio_hash = ? AND created_at >= ?
+		)`,
+		ts, rawText, durationSec, overall, worst, suspect, hash,
+		meta.AudioHash, cutoff)
 	if err != nil {
 		return 0, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		var existing int64
+		if qerr := db.QueryRowContext(ctx,
+			`SELECT id FROM notes WHERE audio_hash = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1`,
+			meta.AudioHash, cutoff).Scan(&existing); qerr == nil {
+			return existing, ErrDuplicateAudio
+		}
+		return 0, ErrDuplicateAudio
 	}
 	return res.LastInsertId()
 }

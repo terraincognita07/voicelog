@@ -31,10 +31,18 @@ import (
 // recorded clip later in the day go through normally.
 const dedupWindow = 5 * time.Minute
 
+// transcriber is the subset of *whisper.Client that processFile depends on.
+// Defined consumer-side so tests can inject a fake without standing up an
+// HTTP server or ffmpeg. *whisper.Client satisfies it; cmd/bot keeps passing
+// the concrete type — only the field on Bot is widened.
+type transcriber interface {
+	Transcribe(ctx context.Context, srcPath, prompt string) (whisper.Result, error)
+}
+
 type Bot struct {
 	bot                 *tele.Bot
 	db                  *db.DB
-	whisper             *whisper.Client
+	whisper             transcriber
 	allowedUser         int64
 	logger              *slog.Logger
 	msg                 messages
@@ -86,7 +94,7 @@ const defaultHallucinationThresh = 0.6
 // vocabulary terms are appended at transcribe time. cfg.AudioDir, when
 // non-empty, enables on-disk retention of the original .oga files (see
 // internal/audio).
-func New(token string, cfg Config, allowedUser int64, store *db.DB, w *whisper.Client, logger *slog.Logger) (*Bot, error) {
+func New(token string, cfg Config, allowedUser int64, store *db.DB, w transcriber, logger *slog.Logger) (*Bot, error) {
 	b, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
@@ -282,6 +290,15 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 		return tb.errReply(c, "download from telegram", err)
 	}
 
+	return tb.processSource(ctx, c, srcPath, duration)
+}
+
+// processSource is everything after we have an on-disk audio file: dedup
+// lookup, whisper transcribe, DB insert, audio retention, saved-reply. Split
+// from processFile so unit tests can feed a pre-prepared temp file without
+// running ffmpeg or hitting telebot. Production caller (processFile) supplies
+// the timeout-bounded ctx; tests can pass any context.
+func (tb *Bot) processSource(ctx context.Context, c tele.Context, srcPath string, duration int) error {
 	// Dedup: SHA-256 the downloaded bytes BEFORE we burn ffmpeg+whisper
 	// cycles on what may be a double-tap. A miss here just costs an
 	// open+read+hash; a hit saves the whole pipeline.
@@ -319,7 +336,10 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 
 	// Derive quality signals. Missing segments → store NULL.
-	meta := db.NoteMeta{AudioHash: audioHash}
+	meta := db.NoteMeta{
+		AudioHash:      audioHash,
+		DedupWindowSec: int64(dedupWindow.Seconds()),
+	}
 	overall, worst, suspect, ok := result.Aggregate(tb.hallucinationThresh)
 	if ok {
 		meta.ConfidenceOverall = &overall
@@ -328,6 +348,20 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	}
 	id, err := tb.db.InsertNoteWithMeta(ctx, text, duration, meta)
 	if err != nil {
+		if errors.Is(err, db.ErrDuplicateAudio) {
+			// Race: another goroutine inserted the same audio between our
+			// FindRecentByHash check and this insert. Migration 006's
+			// UNIQUE constraint catches it; we surface the same Duplicate
+			// reply the fast-lane would have. id is the surviving row.
+			dup, derr := tb.db.FindRecentByHash(ctx, audioHash, dedupWindow)
+			if derr == nil {
+				return c.Send(tb.msg.Duplicate(dup.ID, int(time.Since(dup.CreatedAt).Seconds())))
+			}
+			// Lookup failed (shouldn't happen — we just confirmed the row
+			// exists) — fall back to a zero-age message so the user still
+			// gets feedback instead of an "insert note" error.
+			return c.Send(tb.msg.Duplicate(id, 0))
+		}
 		return tb.errReply(c, "insert note", err)
 	}
 

@@ -534,6 +534,189 @@ func TestInsertNoteWithMeta_AudioHash(t *testing.T) {
 	}
 }
 
+// TestInsertNoteWithMeta_DedupWithinWindowReturnsSentinel exercises the
+// race-closer in InsertNoteWithMeta. With DedupWindowSec set, two calls
+// in quick succession sharing the same audio_hash: the first inserts,
+// the second is silently skipped by the WHERE NOT EXISTS guard, and the
+// caller gets the surviving row's id back alongside ErrDuplicateAudio.
+func TestInsertNoteWithMeta_DedupWithinWindowReturnsSentinel(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	first, err := d.InsertNoteWithMeta(ctx, "v1", 5,
+		db.NoteMeta{AudioHash: "race-hash", DedupWindowSec: 300})
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	dupID, err := d.InsertNoteWithMeta(ctx, "v2 — should be lost", 5,
+		db.NoteMeta{AudioHash: "race-hash", DedupWindowSec: 300})
+	if !errors.Is(err, db.ErrDuplicateAudio) {
+		t.Fatalf("second insert: want ErrDuplicateAudio, got %v", err)
+	}
+	if dupID != first {
+		t.Errorf("dup id: want %d (the surviving row), got %d", first, dupID)
+	}
+
+	var count int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes WHERE audio_hash = ?`, "race-hash").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("rows with race-hash = %d, want 1 (WHERE NOT EXISTS must have held)", count)
+	}
+}
+
+// TestInsertNoteWithMeta_StaleResendBeyondWindowInsertsNew asserts that
+// the conditional INSERT respects the dedup window — a same-hash row
+// older than DedupWindowSec lets a new note through. Preserves the
+// "user re-sends the same recording the next morning" semantics.
+func TestInsertNoteWithMeta_StaleResendBeyondWindowInsertsNew(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	// Seed a row from "long ago".
+	if _, err := d.ExecContext(ctx,
+		`INSERT INTO notes (created_at, raw_text, duration_sec, audio_hash) VALUES (?, ?, ?, ?)`,
+		time.Now().Add(-1*time.Hour).Unix(), "stale", 3, "stale-hash"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	fresh, err := d.InsertNoteWithMeta(ctx, "fresh resend", 3,
+		db.NoteMeta{AudioHash: "stale-hash", DedupWindowSec: 300})
+	if err != nil {
+		t.Fatalf("fresh insert: %v", err)
+	}
+	if fresh == 0 {
+		t.Errorf("fresh insert must return a valid id; got 0")
+	}
+
+	var count int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes WHERE audio_hash = ?`, "stale-hash").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("rows with stale-hash = %d, want 2 (stale + fresh)", count)
+	}
+}
+
+// TestInsertNoteWithMeta_NullHashesCoexist asserts that NULL audio_hash
+// values bypass the dedup check entirely — pre-migration-005 notes and
+// any path that doesn't carry an audio_hash must keep inserting freely
+// regardless of DedupWindowSec.
+func TestInsertNoteWithMeta_NullHashesCoexist(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	for i := 0; i < 3; i++ {
+		if _, err := d.InsertNoteWithMeta(ctx, "no hash", 1,
+			db.NoteMeta{DedupWindowSec: 300}); err != nil {
+			t.Fatalf("insert #%d: %v", i, err)
+		}
+	}
+	var count int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes WHERE audio_hash IS NULL`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("NULL-hash rows = %d, want 3 (no dedup for NULL hash)", count)
+	}
+}
+
+// TestInsertNoteWithMeta_NoDedupWindowAllowsDuplicateHash asserts the
+// fast-path: when DedupWindowSec is 0 (or unset), identical audio_hash
+// values are NOT deduplicated at this layer. Callers that want dedup
+// have to opt in explicitly. Keeps existing callsites (tests, the
+// retranscribe MCP tool) backward-compatible.
+func TestInsertNoteWithMeta_NoDedupWindowAllowsDuplicateHash(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	for i := 0; i < 2; i++ {
+		if _, err := d.InsertNoteWithMeta(ctx, "dup hash, no window", 1,
+			db.NoteMeta{AudioHash: "no-window-hash"}); err != nil {
+			t.Fatalf("insert #%d: %v", i, err)
+		}
+	}
+	var count int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes WHERE audio_hash = ?`, "no-window-hash").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("rows = %d, want 2 (DedupWindowSec=0 disables the check)", count)
+	}
+}
+
+// TestInsertNoteWithMeta_ConcurrentDupesProduceOneRow stresses the race
+// the WHERE NOT EXISTS guard was designed to close. 20 goroutines all
+// try to insert with the same hash within the dedup window; exactly
+// one row must survive, the rest must see ErrDuplicateAudio with the
+// survivor's id.
+func TestInsertNoteWithMeta_ConcurrentDupesProduceOneRow(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	const N = 20
+	var wg sync.WaitGroup
+	wg.Add(N)
+	ids := make(chan int64, N)
+	errs := make(chan error, N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			id, err := d.InsertNoteWithMeta(ctx, "concurrent", 2,
+				db.NoteMeta{AudioHash: "concurrent-hash", DedupWindowSec: 300})
+			ids <- id
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	close(errs)
+
+	successes := 0
+	dupes := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, db.ErrDuplicateAudio):
+			dupes++
+		default:
+			t.Errorf("unexpected error from concurrent insert: %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Errorf("successful inserts = %d, want exactly 1", successes)
+	}
+	if dupes != N-1 {
+		t.Errorf("ErrDuplicateAudio returns = %d, want %d", dupes, N-1)
+	}
+
+	var survivorID int64
+	for id := range ids {
+		if id == 0 {
+			continue
+		}
+		if survivorID == 0 {
+			survivorID = id
+			continue
+		}
+		if id != survivorID {
+			t.Errorf("returned id %d != survivor id %d", id, survivorID)
+		}
+	}
+	if survivorID == 0 {
+		t.Errorf("no survivor id reported across %d goroutines", N)
+	}
+
+	var count int
+	if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes WHERE audio_hash = ?`, "concurrent-hash").Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("final notes count for hash = %d, want 1", count)
+	}
+}
+
 func TestFindRecentByHash_WindowExpiry(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
