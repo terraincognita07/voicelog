@@ -92,6 +92,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **`internal/mcp/server.go` split by tool family.** 542 → 128 lines
+  in `server.go` (NewServer + shared helpers — `toMCP`, `jsonResult`,
+  `toInt64Slice`, plus the `mcpNote` wire type). New same-package
+  siblings: `tools_read.go` (230 — the five read-only tools),
+  `tools_mutate.go` (114 — the three DB-writing tools that don't
+  call out), `tools_retranscribe.go` (137 — `RetranscribeDeps`,
+  `retranscribeResponse`, and the registrar that pulls in whisper +
+  audio + promptbuilder). Public API unchanged.
 - **`internal/db/notes.go` split by domain.** The 562-line file became
   five focused siblings under the same package: `notes.go` (321 — CRUD
   + `queryNotes` helper + Note / NoteMeta / Status / ErrNoteNotFound /
