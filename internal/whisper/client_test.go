@@ -16,13 +16,13 @@ import (
 
 func TestResult_Aggregate(t *testing.T) {
 	cases := []struct {
-		name         string
-		segments     []Segment
-		thresh       float64
-		wantOverall  float64
-		wantWorst    float64
-		wantSuspect  bool
-		wantOK       bool
+		name        string
+		segments    []Segment
+		thresh      float64
+		wantOverall float64
+		wantWorst   float64
+		wantSuspect bool
+		wantOK      bool
 	}{
 		{
 			name:     "no segments",
@@ -48,7 +48,7 @@ func TestResult_Aggregate(t *testing.T) {
 				{AvgLogprob: -0.3, NoSpeechProb: 0.05},
 			},
 			thresh:      0.6,
-			wantOverall: -0.9,  // mean of -1.5 and -0.3
+			wantOverall: -0.9, // mean of -1.5 and -0.3
 			wantWorst:   -1.5,
 			wantSuspect: true,
 			wantOK:      true,

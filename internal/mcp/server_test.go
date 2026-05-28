@@ -16,9 +16,9 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
 	"voicelog/internal/db"
+	"voicelog/internal/db/migrations"
 	"voicelog/internal/mcp"
 	"voicelog/internal/whisper"
-	"voicelog/internal/db/migrations"
 )
 
 const testToken = "abcdefghijklmnopqrst"
@@ -457,4 +457,3 @@ func TestUnauthorizedHasWWWAuthenticate(t *testing.T) {
 		t.Errorf("WWW-Authenticate: want Bearer realm, got %q", wa)
 	}
 }
-

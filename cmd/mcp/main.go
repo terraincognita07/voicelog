@@ -14,9 +14,9 @@ import (
 
 	"voicelog/internal/config"
 	"voicelog/internal/db"
+	"voicelog/internal/db/migrations"
 	"voicelog/internal/mcp"
 	"voicelog/internal/whisper"
-	"voicelog/internal/db/migrations"
 )
 
 const minTokenLen = 16
@@ -119,4 +119,3 @@ func main() {
 		logger.Error("shutdown", "err", err)
 	}
 }
-

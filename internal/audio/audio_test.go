@@ -118,10 +118,10 @@ func TestPathInside(t *testing.T) {
 	}{
 		{base, filepath.Join(base, "42.oga"), true},
 		{base, filepath.Join(base, "sub", "42.oga"), true},
-		{base, base, false},                                 // dir itself, not inside
-		{base, base + string(os.PathSeparator), false},      // same w/ trailing sep
+		{base, base, false},                                   // dir itself, not inside
+		{base, base + string(os.PathSeparator), false},        // same w/ trailing sep
 		{base, filepath.Join(outsideBase, "evil.oga"), false}, // sibling temp dir
-		{base, filepath.Join(base, "..", "outside"), false}, // traversal upward
+		{base, filepath.Join(base, "..", "outside"), false},   // traversal upward
 	}
 	for _, c := range cases {
 		got := pathInside(c.dir, c.p)

@@ -9,11 +9,11 @@ import (
 
 func TestParseFloat01Inner(t *testing.T) {
 	cases := []struct {
-		name      string
-		value     string
-		wantF     float64
-		wantPres  bool
-		wantErr   bool
+		name     string
+		value    string
+		wantF    float64
+		wantPres bool
+		wantErr  bool
 	}{
 		{"empty", "", 0, false, false},
 		{"zero", "0", 0, true, false},

@@ -32,18 +32,18 @@ import (
 const dedupWindow = 5 * time.Minute
 
 type Bot struct {
-	bot                  *tele.Bot
-	db                   *db.DB
-	whisper              *whisper.Client
-	allowedUser          int64
-	logger               *slog.Logger
-	msg                  messages
-	basePrompt           string
-	audioDir             string  // persistent audio storage; "" = retention disabled
-	audioRetainOn        bool    // memoizes audioDir != "" for processFile
-	hallucinationThresh  float64 // no_speech_prob > thresh → suspect; default 0.6
-	dataDir              string  // filesystem to check for free space
-	minFreeDiskBytes     uint64  // disk-full threshold; 0 disables the guard
+	bot                 *tele.Bot
+	db                  *db.DB
+	whisper             *whisper.Client
+	allowedUser         int64
+	logger              *slog.Logger
+	msg                 messages
+	basePrompt          string
+	audioDir            string  // persistent audio storage; "" = retention disabled
+	audioRetainOn       bool    // memoizes audioDir != "" for processFile
+	hallucinationThresh float64 // no_speech_prob > thresh → suspect; default 0.6
+	dataDir             string  // filesystem to check for free space
+	minFreeDiskBytes    uint64  // disk-full threshold; 0 disables the guard
 
 	mainMenu       *tele.ReplyMarkup
 	btnMenuPending *tele.Btn
@@ -379,8 +379,6 @@ func previewText(s string, cap int) string {
 	return flat
 }
 
-
-
 func (tb *Bot) cmdDelete(c tele.Context) error {
 	args := strings.Fields(c.Message().Payload)
 	if len(args) != 1 {
@@ -400,4 +398,3 @@ func (tb *Bot) cmdDelete(c tele.Context) error {
 	}
 	return c.Send(tb.msg.Discarded(id))
 }
-

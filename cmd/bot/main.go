@@ -12,9 +12,9 @@ import (
 	"voicelog/internal/audio"
 	"voicelog/internal/config"
 	"voicelog/internal/db"
+	"voicelog/internal/db/migrations"
 	"voicelog/internal/telegram"
 	"voicelog/internal/whisper"
-	"voicelog/internal/db/migrations"
 )
 
 func main() {
@@ -149,4 +149,3 @@ func main() {
 	logger.Info("shutting down", "signal", sig.String())
 	bot.Stop()
 }
-

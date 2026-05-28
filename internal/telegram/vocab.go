@@ -35,11 +35,11 @@ import (
 const MaxVocabTermLen = 64
 
 var (
-	vocabRmBtn       = tele.InlineButton{Unique: "vocab_rm"}       // remove one term
-	vocabAddBtn      = tele.InlineButton{Unique: "vocab_add"}      // open add prompt
-	vocabClearAskBtn = tele.InlineButton{Unique: "vocab_clr_ask"}  // show confirm
-	vocabClearYesBtn = tele.InlineButton{Unique: "vocab_clr_yes"}  // confirm wipe
-	vocabClearNoBtn  = tele.InlineButton{Unique: "vocab_clr_no"}   // cancel wipe
+	vocabRmBtn       = tele.InlineButton{Unique: "vocab_rm"}      // remove one term
+	vocabAddBtn      = tele.InlineButton{Unique: "vocab_add"}     // open add prompt
+	vocabClearAskBtn = tele.InlineButton{Unique: "vocab_clr_ask"} // show confirm
+	vocabClearYesBtn = tele.InlineButton{Unique: "vocab_clr_yes"} // confirm wipe
+	vocabClearNoBtn  = tele.InlineButton{Unique: "vocab_clr_no"}  // cancel wipe
 )
 
 // addVocabTerms walks the slice, applies MaxVocabTermLen rule, calls

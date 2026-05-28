@@ -27,68 +27,68 @@ func formatDuration(sec int) string {
 // startup via the BOT_LOCALE env var. Add a new locale by appending an
 // entry to locales below — tests guarantee every locale has every field.
 type messages struct {
-	Welcome        string // shown on /start — short greeting + first-step hint
-	Help           string // shown on /help — full guide
-	Recorded       func(id int64, durSec int, pending int, preview string, suspect bool) string
-	SuspectWarn    string // appended to saved-reply when first segment looks like silence
-	Duplicate      func(existingID int64, ageSec int) string // "duplicate of #N sent X sec ago"
-	DiskFull       func(freeMB, minMB uint64) string         // capture refused — low disk
-	EmptyTrans     string
-	EmptyList      string
-	EmptyPending   string // friendlier "(empty)" for /pending
-	EmptyRecent    func(filter string) string
-	EmptyVocab     string // shown in /vocab with [➕ Add] hint
-	UsageDelete    string
-	BadID          string
-	NotFound       func(id int64) string
-	Discarded      func(id int64) string
-	Errors         map[string]string
-	ErrFallback    string
-	DiscardBtn     string
-	RestoreBtn     string
-	ShowFullBtn    string // [📖 Show full] when preview was truncated
-	DiscardedReply func(id int64, preview string) string
-	RestoredReply  func(id int64, preview string) string
-	Status         func(s string) string // localize "pending"/"analyzed"/"discarded"
-	Transcribing   string                 // "transcribing..." flash before result
-	Commands       []commandHint
-	MenuPending    string
-	MenuRecent     string
-	MenuVocab      string
-	MenuHelp       string
-	VocabUsage     string
-	VocabList      func(terms []string) string
-	VocabAdded     func(added, total int) string
-	VocabRemoved   func(term string, ok bool) string
-	VocabClearAsk  func(n int) string
-	VocabCleared   func(n int) string
-	VocabHeader    func(n int) string
-	VocabRmBtn     func(term string) string
-	VocabAddBtn    string
-	VocabClearBtn  string
-	VocabYesBtn    string
-	VocabNoBtn     string
+	Welcome            string // shown on /start — short greeting + first-step hint
+	Help               string // shown on /help — full guide
+	Recorded           func(id int64, durSec int, pending int, preview string, suspect bool) string
+	SuspectWarn        string                                    // appended to saved-reply when first segment looks like silence
+	Duplicate          func(existingID int64, ageSec int) string // "duplicate of #N sent X sec ago"
+	DiskFull           func(freeMB, minMB uint64) string         // capture refused — low disk
+	EmptyTrans         string
+	EmptyList          string
+	EmptyPending       string // friendlier "(empty)" for /pending
+	EmptyRecent        func(filter string) string
+	EmptyVocab         string // shown in /vocab with [➕ Add] hint
+	UsageDelete        string
+	BadID              string
+	NotFound           func(id int64) string
+	Discarded          func(id int64) string
+	Errors             map[string]string
+	ErrFallback        string
+	DiscardBtn         string
+	RestoreBtn         string
+	ShowFullBtn        string // [📖 Show full] when preview was truncated
+	DiscardedReply     func(id int64, preview string) string
+	RestoredReply      func(id int64, preview string) string
+	Status             func(s string) string // localize "pending"/"analyzed"/"discarded"
+	Transcribing       string                // "transcribing..." flash before result
+	Commands           []commandHint
+	MenuPending        string
+	MenuRecent         string
+	MenuVocab          string
+	MenuHelp           string
+	VocabUsage         string
+	VocabList          func(terms []string) string
+	VocabAdded         func(added, total int) string
+	VocabRemoved       func(term string, ok bool) string
+	VocabClearAsk      func(n int) string
+	VocabCleared       func(n int) string
+	VocabHeader        func(n int) string
+	VocabRmBtn         func(term string) string
+	VocabAddBtn        string
+	VocabClearBtn      string
+	VocabYesBtn        string
+	VocabNoBtn         string
 	VocabAddPrompt     string
 	VocabSkippedSuffix func(n int) string // " (skipped N too long)" — empty when n=0
 	VocabClearFallback string             // text-mode hint when user typed "/vocab clear" without confirm
 
-	ShowMoreBtn         string
-	FilterAllBtn        string
-	FilterPendingBtn    string
-	FilterDiscardedBtn  string
-	FilterActiveMark    string // prefix added to the currently active chip
-	GoDiscardedBtn      string // jump to /recent with discarded filter (for empty lists)
+	ShowMoreBtn        string
+	FilterAllBtn       string
+	FilterPendingBtn   string
+	FilterDiscardedBtn string
+	FilterActiveMark   string // prefix added to the currently active chip
+	GoDiscardedBtn     string // jump to /recent with discarded filter (for empty lists)
 
-	ClearAllBtn       string
-	ClearAllAsk       func(n int) string
-	ClearAllYesBtn    string
-	ClearAllNoBtn     string
-	ClearAllDone      func(n int) string
+	ClearAllBtn    string
+	ClearAllAsk    func(n int) string
+	ClearAllYesBtn string
+	ClearAllNoBtn  string
+	ClearAllDone   func(n int) string
 
 	DayToday     string
 	DayYesterday string
 	DayHeader    func(label string, count int) string // "📅 today (5)"
-	DayLabel     func(t time.Time) string              // "Mon, May 26" / "Пн, 26 мая"
+	DayLabel     func(t time.Time) string             // "Mon, May 26" / "Пн, 26 мая"
 }
 
 var locales = map[string]messages{
@@ -154,22 +154,22 @@ var locales = map[string]messages{
 			return fmt.Sprintf("🗑 Note #%d discarded.", id)
 		},
 		Errors: map[string]string{
-			"tmp dir":              "Couldn't prepare temporary storage.",
+			"tmp dir":                "Couldn't prepare temporary storage.",
 			"download from telegram": "Couldn't download your audio from Telegram.",
-			"whisper":              "Speech recognition unavailable. Try again in a moment.",
-			"insert note":          "Couldn't save the transcription.",
-			"list pending":         "Couldn't load the pending list.",
-			"list recent":          "Couldn't load the recent list.",
-			"refresh":              "Couldn't refresh the view.",
-			"discard":              "Couldn't discard the note.",
-			"restore":              "Couldn't restore the note.",
-			"clear":                "Couldn't clear pending notes.",
-			"mark discarded":       "Couldn't discard the note.",
-			"vocab list":           "Couldn't load the vocabulary.",
-			"vocab add":            "Couldn't add to vocabulary.",
-			"vocab del":            "Couldn't remove from vocabulary.",
-			"vocab clear":          "Couldn't clear the vocabulary.",
-			"vocab rm":             "Couldn't remove that term.",
+			"whisper":                "Speech recognition unavailable. Try again in a moment.",
+			"insert note":            "Couldn't save the transcription.",
+			"list pending":           "Couldn't load the pending list.",
+			"list recent":            "Couldn't load the recent list.",
+			"refresh":                "Couldn't refresh the view.",
+			"discard":                "Couldn't discard the note.",
+			"restore":                "Couldn't restore the note.",
+			"clear":                  "Couldn't clear pending notes.",
+			"mark discarded":         "Couldn't discard the note.",
+			"vocab list":             "Couldn't load the vocabulary.",
+			"vocab add":              "Couldn't add to vocabulary.",
+			"vocab del":              "Couldn't remove from vocabulary.",
+			"vocab clear":            "Couldn't clear the vocabulary.",
+			"vocab rm":               "Couldn't remove that term.",
 		},
 		ErrFallback: "Something went wrong. Check the bot logs if it keeps happening.",
 		Status: func(s string) string {
@@ -184,9 +184,9 @@ var locales = map[string]messages{
 			return s
 		},
 		Transcribing: "🎙 transcribing…",
-		DiscardBtn:  "🗑 Discard",
-		RestoreBtn:  "↩ Restore",
-		ShowFullBtn: "📖 Show full",
+		DiscardBtn:   "🗑 Discard",
+		RestoreBtn:   "↩ Restore",
+		ShowFullBtn:  "📖 Show full",
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Note #%d discarded.", id)
 			if preview == "" {
@@ -270,7 +270,7 @@ var locales = map[string]messages{
 		FilterActiveMark:   "• ",
 		GoDiscardedBtn:     "🕘 Show discarded",
 
-		ClearAllBtn:    "🗑 Clear all",
+		ClearAllBtn: "🗑 Clear all",
 		ClearAllAsk: func(n int) string {
 			return fmt.Sprintf("Discard all %d pending notes?\nReversible per-note from the [Discarded] filter.", n)
 		},
@@ -345,22 +345,22 @@ var locales = map[string]messages{
 			return fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
 		},
 		Errors: map[string]string{
-			"tmp dir":              "Не удалось подготовить временное хранилище.",
+			"tmp dir":                "Не удалось подготовить временное хранилище.",
 			"download from telegram": "Не удалось скачать аудио из Telegram.",
-			"whisper":              "Распознавание речи недоступно. Попробуй ещё раз.",
-			"insert note":          "Не удалось сохранить транскрипцию.",
-			"list pending":         "Не удалось загрузить очередь.",
-			"list recent":          "Не удалось загрузить последние заметки.",
-			"refresh":              "Не удалось обновить вид.",
-			"discard":              "Не удалось отбросить заметку.",
-			"restore":              "Не удалось восстановить заметку.",
-			"clear":                "Не удалось очистить очередь.",
-			"mark discarded":       "Не удалось отбросить заметку.",
-			"vocab list":           "Не удалось загрузить словарь.",
-			"vocab add":            "Не удалось добавить в словарь.",
-			"vocab del":            "Не удалось удалить из словаря.",
-			"vocab clear":          "Не удалось очистить словарь.",
-			"vocab rm":             "Не удалось удалить термин.",
+			"whisper":                "Распознавание речи недоступно. Попробуй ещё раз.",
+			"insert note":            "Не удалось сохранить транскрипцию.",
+			"list pending":           "Не удалось загрузить очередь.",
+			"list recent":            "Не удалось загрузить последние заметки.",
+			"refresh":                "Не удалось обновить вид.",
+			"discard":                "Не удалось отбросить заметку.",
+			"restore":                "Не удалось восстановить заметку.",
+			"clear":                  "Не удалось очистить очередь.",
+			"mark discarded":         "Не удалось отбросить заметку.",
+			"vocab list":             "Не удалось загрузить словарь.",
+			"vocab add":              "Не удалось добавить в словарь.",
+			"vocab del":              "Не удалось удалить из словаря.",
+			"vocab clear":            "Не удалось очистить словарь.",
+			"vocab rm":               "Не удалось удалить термин.",
 		},
 		ErrFallback: "Что-то пошло не так. Если повторится — проверь логи бота.",
 		Status: func(s string) string {
@@ -375,9 +375,9 @@ var locales = map[string]messages{
 			return s
 		},
 		Transcribing: "🎙 распознаю…",
-		DiscardBtn:  "🗑 Отбросить",
-		RestoreBtn:  "↩ Вернуть",
-		ShowFullBtn: "📖 Показать полностью",
+		DiscardBtn:   "🗑 Отбросить",
+		RestoreBtn:   "↩ Вернуть",
+		ShowFullBtn:  "📖 Показать полностью",
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
 			if preview == "" {
@@ -461,7 +461,7 @@ var locales = map[string]messages{
 		FilterActiveMark:   "• ",
 		GoDiscardedBtn:     "🕘 Показать отброшенные",
 
-		ClearAllBtn:    "🗑 Отбросить все",
+		ClearAllBtn: "🗑 Отбросить все",
 		ClearAllAsk: func(n int) string {
 			return fmt.Sprintf("Отбросить все %d заметок из очереди?\nКаждую можно вернуть по одной из фильтра [Отброшенные].", n)
 		},

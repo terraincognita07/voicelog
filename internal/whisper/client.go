@@ -50,8 +50,8 @@ func New(url string) *Client {
 // we parse defensively and let callers treat missing data as "unknown"
 // instead of "perfect".
 type Segment struct {
-	AvgLogprob    float64 `json:"avg_logprob"`
-	NoSpeechProb  float64 `json:"no_speech_prob"`
+	AvgLogprob   float64 `json:"avg_logprob"`
+	NoSpeechProb float64 `json:"no_speech_prob"`
 }
 
 // Result is the parsed whisper response. Segments is nil when the
