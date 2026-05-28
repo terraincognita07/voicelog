@@ -92,6 +92,21 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **Audio dir perm check at startup.** `audio.CheckDirPerm(audioDir, logger)`
+  logs Warn if `AUDIO_DIR` exists with mode wider than `0700`. The
+  read-only check addresses the gap where `MkdirAll(0o700)` only
+  affects freshly-created directories — an operator-restored or
+  pre-created `AUDIO_DIR` with relaxed permissions would silently
+  leave retained audio under a non-owner-only parent. The check is
+  Warn-only — never chmods behind the operator's back. Gated by
+  `runtime.GOOS != "windows"` (Windows reports synthetic perm bits).
+  Wired into bot startup next to the other retention housekeeping.
+- **`/vocab` clear-cancel asymmetry documented** in
+  `internal/telegram/vocab.go`. No code change — the empty `Data`
+  payload on Yes/No is intentional (vocab has no stateful view to
+  preserve across the confirm modal) but the asymmetry with
+  `/pending`'s clear-cancel had to be called out so a future
+  contributor doesn't "fix" it by mistake.
 - **`migrations/` moved to `internal/db/migrations/`.** The migration
   runner (`db.Migrate`) lives in `internal/db`; the SQL files it
   embeds now sit next to it, following Go's "package owns its

@@ -1,12 +1,14 @@
 package audio
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -460,6 +462,55 @@ func TestJanitor_ExitsOnContextCancel(t *testing.T) {
 		// shut down cleanly
 	case <-time.After(2 * time.Second):
 		t.Fatalf("Janitor did not exit within 2s of ctx cancel")
+	}
+}
+
+// TestCheckDirPerm runs only on Unix because Windows reports synthetic
+// permission bits from Stat. The function is a Warn-only logger; we
+// assert via captured log content.
+func TestCheckDirPerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports synthetic mode bits — CheckDirPerm no-ops there")
+	}
+	cases := []struct {
+		name     string
+		mode     os.FileMode
+		wantWarn bool
+	}{
+		{"tight_0700", 0o700, false},
+		{"world_traversable_0755", 0o755, true},
+		{"group_readable_0750", 0o750, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "audio")
+			if err := os.Mkdir(dir, c.mode); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			// MkDir is subject to umask; re-chmod to be sure.
+			if err := os.Chmod(dir, c.mode); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			CheckDirPerm(dir, logger)
+			gotWarn := strings.Contains(buf.String(), "wider than 0700")
+			if gotWarn != c.wantWarn {
+				t.Errorf("warn = %v, want %v (log: %q)", gotWarn, c.wantWarn, buf.String())
+			}
+		})
+	}
+}
+
+func TestCheckDirPerm_MissingDirNoWarn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports synthetic mode bits")
+	}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	CheckDirPerm(filepath.Join(t.TempDir(), "does-not-exist"), logger)
+	if buf.Len() != 0 {
+		t.Errorf("missing dir should be silent (MkdirAll handles it later); got %q", buf.String())
 	}
 }
 

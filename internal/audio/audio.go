@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -127,6 +128,44 @@ func RelativizeLegacyPaths(ctx context.Context, store *db.DB, audioDir string) (
 		rewritten++
 	}
 	return rewritten, nil
+}
+
+// CheckDirPerm warns at Warn level if audioDir EXISTS with a mode
+// wider than 0o700. SaveOriginal's MkdirAll(0o700) only sets perms on
+// freshly-created directories — an operator who pre-created
+// `/data/audio` with 0o755 (or who restored a backup with relaxed
+// permissions) would get audio files inheriting their umask under a
+// world-traversable parent, silently weakening the
+// owner-read+write-only contract documented in SECURITY-MODEL.
+//
+// Read-only: never chmods. Changing perms behind the operator's back
+// could be just as surprising as leaving them lax. The Warn is the
+// signal — the operator decides whether to tighten the directory.
+//
+// No-op on Windows: os.FileMode bits from Stat are synthetic there,
+// so the comparison would either always pass or always fail. We track
+// that limit in `.agents/context/gotchas.md`.
+func CheckDirPerm(audioDir string, logger *slog.Logger) {
+	if audioDir == "" || runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(audioDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return // not created yet — MkdirAll will give it 0700 on first save
+		}
+		logger.Warn("audio retain: stat dir for perm check", "dir", audioDir, "err", err)
+		return
+	}
+	if !info.IsDir() {
+		logger.Warn("audio retain: AUDIO_DIR is not a directory", "path", audioDir)
+		return
+	}
+	mode := info.Mode().Perm()
+	if mode&0o077 != 0 {
+		logger.Warn("audio retain: AUDIO_DIR has permissions wider than 0700; retained audio will inherit your umask under a non-owner-only parent",
+			"dir", audioDir, "mode", fmt.Sprintf("%#o", mode))
+	}
 }
 
 // ScanOrphans walks audioDir for *.oga files and counts those that are

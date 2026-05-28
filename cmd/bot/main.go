@@ -95,6 +95,7 @@ func main() {
 	// set (retention enabled). Both passes are read-mostly and safe to
 	// run on every startup.
 	if audioDir != "" {
+		audio.CheckDirPerm(audioDir, logger)
 		if n, err := audio.RelativizeLegacyPaths(ctx, store, audioDir); err != nil {
 			logger.Warn("audio retain: relativize legacy paths failed", "err", err)
 		} else if n > 0 {

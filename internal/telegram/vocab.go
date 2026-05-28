@@ -210,6 +210,17 @@ func (tb *Bot) cbVocabAddPrompt(c tele.Context) error {
 	return c.Send(tb.msg.VocabAddPrompt, &tele.ReplyMarkup{ForceReply: true, Selective: true})
 }
 
+// vocab clear-cancel intentionally has no callback Data payload.
+//
+// Compare to `/pending` clear-cancel (cbPendingClearAsk), where Yes/No
+// buttons carry the encoded pendingState (filter / page / expDay) so
+// Cancel returns to the SAME view the user came from. The /vocab view
+// has no analogous state — no filter chips, no day grouping, no
+// pagination — so there is nothing to preserve across the confirm
+// modal. cbVocabClearNo just re-renders the canonical list. If we
+// ever add a filter or page to /vocab, the asymmetry needs to go: copy
+// the pending pattern, encode state into yes/no Data here.
+
 func (tb *Bot) cbVocabClearAsk(c tele.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
