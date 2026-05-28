@@ -185,7 +185,7 @@ voicelog-bot | {"level":"INFO","msg":"transcribing", ...}
 And the bot replies:
 
 ```
-✓ записано #1 (1 pending)
+✓ Note #1 saved · 0:05 · 1 pending
 ```
 
 Verify with `/pending` in Telegram, or:

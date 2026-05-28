@@ -38,8 +38,8 @@ Nothing is firmly queued as the immediate next item — see Mid-term.
   and a separate vocab table. Big lift; only worth doing with a
   concrete second user asking for it.
 - **Embeddings / vector search alongside FTS5.** FTS5 is great for
-  keywords; semantic search would catch "что я тогда думал про
-  бессонницу" hitting a note that says "не мог заснуть". Open
+  keywords; semantic search would catch "what was I thinking about my
+  insomnia" hitting a note that says "couldn't fall asleep". Open
   question: which model, how to keep it offline-by-default.
 - **Web UI for browsing the corpus.** Read-only, opens against the
   same SQLite file. Useful when the user wants to bulk-edit / triage
