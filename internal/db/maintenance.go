@@ -24,9 +24,11 @@ const (
 // outcome at Info; failures log Warn and are not retried until the
 // next tick — transient errors shouldn't crash the bot.
 //
-// Safe to run from any process that holds an open *DB. Running it from
-// multiple processes is harmless (PRAGMA wal_checkpoint is idempotent;
-// concurrent VACUUMs serialize behind SQLite's write lock).
+// Running it from multiple processes is harmless in principle (PRAGMA
+// wal_checkpoint is idempotent; concurrent VACUUMs serialize behind
+// SQLite's write lock), but by convention voicelog starts this loop ONLY
+// in the mcp container (see cmd/mcp/main.go) so the two processes don't
+// needlessly contend on the write lock. Don't also start it in the bot.
 func MaintenanceLoop(ctx context.Context, store *DB, logger *slog.Logger) {
 	checkpointTick := time.NewTicker(checkpointPeriod)
 	defer checkpointTick.Stop()

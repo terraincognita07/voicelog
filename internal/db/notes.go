@@ -53,10 +53,13 @@ var (
 	ErrNoteNotFound = errors.New("note not found")
 
 	// ErrDuplicateAudio is returned by InsertNoteWithMeta when the
-	// UNIQUE constraint on audio_hash (migration 006) trips. Callers
-	// that handed in a non-empty AudioHash get back the existing
-	// note's id alongside this error so they can render a duplicate-
-	// detected reply without an extra round-trip.
+	// conditional INSERT ... WHERE NOT EXISTS finds an existing note
+	// with the same audio_hash inside the dedup window (RowsAffected=0).
+	// There is no UNIQUE constraint on audio_hash — the time-bounded
+	// subquery is the dedup mechanism (see InsertNoteWithMeta). Callers
+	// that handed in a non-empty AudioHash get back the existing note's
+	// id alongside this error so they can render a duplicate-detected
+	// reply without an extra round-trip.
 	ErrDuplicateAudio = errors.New("duplicate audio_hash")
 )
 

@@ -350,9 +350,10 @@ func (tb *Bot) processSource(ctx context.Context, c tele.Context, srcPath string
 	if err != nil {
 		if errors.Is(err, db.ErrDuplicateAudio) {
 			// Race: another goroutine inserted the same audio between our
-			// FindRecentByHash check and this insert. Migration 006's
-			// UNIQUE constraint catches it; we surface the same Duplicate
-			// reply the fast-lane would have. id is the surviving row.
+			// FindRecentByHash check and this insert. InsertNoteWithMeta's
+			// conditional INSERT ... WHERE NOT EXISTS catches it (no UNIQUE
+			// constraint involved); we surface the same Duplicate reply the
+			// fast-lane would have. id is the surviving row.
 			dup, derr := tb.db.FindRecentByHash(ctx, audioHash, dedupWindow)
 			if derr == nil {
 				return c.Send(tb.msg.Duplicate(dup.ID, int(time.Since(dup.CreatedAt).Seconds())))
