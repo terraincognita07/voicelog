@@ -92,6 +92,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **Dockerfiles relocated to `docker/`.** `Dockerfile.bot` and
+  `Dockerfile.mcp` no longer sit at repo root. `docker-compose.yml`'s
+  `dockerfile:` and `.github/workflows/ci.yml`'s `file:` updated to
+  `docker/Dockerfile.{bot,mcp}`; build context stays at `.` so no
+  COPY paths inside the Dockerfiles change. Removes two files of
+  top-level clutter.
 - **README split into `docs/`.** Top-level `README.md` went from
   658 to 249 lines — overview, Why-this-exists, the differentiation
   table, the Documentation index, Architecture, Quick start

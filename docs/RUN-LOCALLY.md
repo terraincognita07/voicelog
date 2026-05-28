@@ -38,8 +38,9 @@ migrations/
 scripts/
   fetch-model.sh         # download a whisper ggml model
   whisper-smoke.sh       # local smoke test against whisper-server
-Dockerfile.bot           # alpine + ffmpeg, USER 10000
-Dockerfile.mcp           # distroless/static, USER nonroot
+docker/
+  Dockerfile.bot         # alpine + ffmpeg, USER 10000
+  Dockerfile.mcp         # distroless/static, USER nonroot
 docker-compose.yml       # 3 services, shared ./data volume
 .env.example             # all configuration documented
 ```

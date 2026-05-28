@@ -81,7 +81,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile.bot
+          file: docker/Dockerfile.bot
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -90,7 +90,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile.mcp
+          file: docker/Dockerfile.mcp
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
