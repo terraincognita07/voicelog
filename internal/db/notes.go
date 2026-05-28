@@ -43,6 +43,10 @@ type NoteMeta struct {
 
 var ErrNoteNotFound = errors.New("note not found")
 
+// MaxNotesInRange caps GetNotesInRange to prevent unbounded result sets
+// (memory blow-up if an MCP client supplies an extremely wide window).
+const MaxNotesInRange = 500
+
 // InsertNote inserts a note without any quality metadata — older
 // callsites and tests that don't have segment info should use this
 // path. The confidence_* columns stay NULL and suspect_hallucination is 0.
@@ -80,45 +84,47 @@ func (db *DB) InsertNoteWithMeta(ctx context.Context, rawText string, durationSe
 	return res.LastInsertId()
 }
 
-// DupNote describes an existing note that matches a recent audio hash —
-// returned by FindRecentByHash so the caller can quote "duplicate of #N
-// from X seconds ago" in the user reply.
-type DupNote struct {
-	ID        int64
-	CreatedAt time.Time
-}
-
-// FindRecentByHash looks for a note with the given audio_hash created
-// within `window` of now. Returns ErrNoteNotFound when nothing matches —
-// distinct from a real DB error so the caller can treat "no dup" as a
-// happy path.
-func (db *DB) FindRecentByHash(ctx context.Context, hash string, window time.Duration) (DupNote, error) {
-	if hash == "" {
-		return DupNote{}, ErrNoteNotFound
-	}
-	cutoff := time.Now().Add(-window).Unix()
-	var (
-		id int64
-		ts int64
-	)
+// GetNote fetches a single note by ID. Returns ErrNoteNotFound if absent.
+func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
+	var n Note
+	var ts int64
+	var status string
+	var suspect int
 	err := db.QueryRowContext(ctx, `
-		SELECT id, created_at FROM notes
-		WHERE audio_hash = ? AND created_at >= ?
-		ORDER BY created_at DESC
-		LIMIT 1`, hash, cutoff).Scan(&id, &ts)
+		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
+		       confidence_overall, confidence_min, suspect_hallucination
+		FROM notes
+		WHERE id = ?`, id).Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status,
+		&n.ConfidenceOverall, &n.ConfidenceMin, &suspect)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DupNote{}, ErrNoteNotFound
+		return Note{}, ErrNoteNotFound
 	}
 	if err != nil {
-		return DupNote{}, err
+		return Note{}, err
 	}
-	return DupNote{ID: id, CreatedAt: time.Unix(ts, 0)}, nil
+	n.CreatedAt = time.Unix(ts, 0)
+	n.Status = Status(status)
+	n.SuspectHallucination = suspect != 0
+	return n, nil
 }
 
 func (db *DB) CountPending(ctx context.Context) (int, error) {
 	var n int
 	err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM notes WHERE status = 'pending'`).Scan(&n)
+	return n, err
+}
+
+// CountByStatus returns how many notes hold the given status. status=""
+// counts all notes regardless of status.
+func (db *DB) CountByStatus(ctx context.Context, status string) (int, error) {
+	var n int
+	if status == "" {
+		err := db.QueryRowContext(ctx, `SELECT count(*) FROM notes`).Scan(&n)
+		return n, err
+	}
+	err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM notes WHERE status = ?`, status).Scan(&n)
 	return n, err
 }
 
@@ -156,42 +162,6 @@ func (db *DB) ListRecentByStatus(ctx context.Context, status string, limit int) 
 		LIMIT ?`, status, limit)
 }
 
-// CountByStatus returns how many notes hold the given status. status=""
-// counts all notes regardless of status.
-func (db *DB) CountByStatus(ctx context.Context, status string) (int, error) {
-	var n int
-	if status == "" {
-		err := db.QueryRowContext(ctx, `SELECT count(*) FROM notes`).Scan(&n)
-		return n, err
-	}
-	err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM notes WHERE status = ?`, status).Scan(&n)
-	return n, err
-}
-
-func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
-	res, err := db.ExecContext(ctx,
-		`UPDATE notes SET status = 'discarded' WHERE id = ? AND status != 'discarded'`, id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNoteNotFound
-	}
-	return nil
-}
-
-type NoteWithRank struct {
-	Note
-	Rank    float64
-	Snippet string
-}
-
-// MaxNotesInRange caps GetNotesInRange to prevent unbounded result sets
-// (memory blow-up if an MCP client supplies an extremely wide window).
-const MaxNotesInRange = 500
-
 // GetNotesInRange returns notes whose created_at falls in [from, to). If
 // status is non-empty, results are filtered by status. If status is empty
 // AND includeDiscarded is false, discarded notes are excluded — matches
@@ -228,86 +198,20 @@ func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status st
 		LIMIT ?`, from.Unix(), to.Unix(), limit)
 }
 
-// SearchNotes runs an FTS5 MATCH and returns rows ordered by bm25 rank
-// (lower rank = better match). query is passed through to FTS5 as-is, so it
-// supports the full FTS5 query syntax (phrases in quotes, OR, NEAR, *).
-// When includeDiscarded is false (the default callers want), discarded notes
-// are filtered out — they represent the user's explicit "forget this" signal.
-func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeDiscarded bool) ([]NoteWithRank, error) {
-	if strings.TrimSpace(query) == "" {
-		return nil, errors.New("empty query")
-	}
-	statusFilter := ""
-	if !includeDiscarded {
-		statusFilter = ` AND n.status != 'discarded'`
-	}
-	rows, err := db.QueryContext(ctx, `
-		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status,
-		       n.confidence_overall, n.confidence_min, n.suspect_hallucination,
-		       bm25(notes_fts) AS rank,
-		       snippet(notes_fts, 0, '<<', '>>', '...', 30) AS snip
-		FROM notes_fts
-		JOIN notes n ON n.id = notes_fts.rowid
-		WHERE notes_fts MATCH ?`+statusFilter+`
-		ORDER BY rank
-		LIMIT ?`, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []NoteWithRank
-	for rows.Next() {
-		var nr NoteWithRank
-		var ts int64
-		var status string
-		var suspect int
-		if err := rows.Scan(&nr.ID, &ts, &nr.RawText, &nr.DurationSec, &nr.AudioPath, &status,
-			&nr.ConfidenceOverall, &nr.ConfidenceMin, &suspect, &nr.Rank, &nr.Snippet); err != nil {
-			return nil, err
-		}
-		nr.CreatedAt = time.Unix(ts, 0)
-		nr.Status = Status(status)
-		nr.SuspectHallucination = suspect != 0
-		out = append(out, nr)
-	}
-	return out, rows.Err()
-}
-
-// DiscardAllPending flips every pending note to discarded in one statement.
-// Returns the number of rows actually changed (0 if no pending exists).
-// Idempotent.
-func (db *DB) DiscardAllPending(ctx context.Context) (int, error) {
+// MarkDiscarded flips a single note to discarded. Returns ErrNoteNotFound
+// if the id is unknown OR was already discarded (idempotent caller-side
+// check happens at the SQL level via `status != 'discarded'`).
+func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
 	res, err := db.ExecContext(ctx,
-		`UPDATE notes SET status = 'discarded' WHERE status = 'pending'`)
+		`UPDATE notes SET status = 'discarded' WHERE id = ? AND status != 'discarded'`, id)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	n, _ := res.RowsAffected()
-	return int(n), nil
-}
-
-// GetNote fetches a single note by ID. Returns ErrNoteNotFound if absent.
-func (db *DB) GetNote(ctx context.Context, id int64) (Note, error) {
-	var n Note
-	var ts int64
-	var status string
-	var suspect int
-	err := db.QueryRowContext(ctx, `
-		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
-		       confidence_overall, confidence_min, suspect_hallucination
-		FROM notes
-		WHERE id = ?`, id).Scan(&n.ID, &ts, &n.RawText, &n.DurationSec, &n.AudioPath, &status,
-		&n.ConfidenceOverall, &n.ConfidenceMin, &suspect)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Note{}, ErrNoteNotFound
+	if n == 0 {
+		return ErrNoteNotFound
 	}
-	if err != nil {
-		return Note{}, err
-	}
-	n.CreatedAt = time.Unix(ts, 0)
-	n.Status = Status(status)
-	n.SuspectHallucination = suspect != 0
-	return n, nil
+	return nil
 }
 
 // DiscardNotes marks multiple notes as discarded. Already-discarded rows are
@@ -324,6 +228,19 @@ func (db *DB) DiscardNotes(ctx context.Context, ids []int64) (int, error) {
 		args[i] = id
 	}
 	res, err := db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// DiscardAllPending flips every pending note to discarded in one statement.
+// Returns the number of rows actually changed (0 if no pending exists).
+// Idempotent.
+func (db *DB) DiscardAllPending(ctx context.Context) (int, error) {
+	res, err := db.ExecContext(ctx,
+		`UPDATE notes SET status = 'discarded' WHERE status = 'pending'`)
 	if err != nil {
 		return 0, err
 	}
@@ -355,167 +272,6 @@ func (db *DB) RestoreNote(ctx context.Context, id int64) (bool, error) {
 	return false, nil
 }
 
-// SetAudioPath stores the on-disk path of the retained audio file for
-// the given note. No-op-safe: setting twice overwrites; an empty path
-// effectively clears the field.
-func (db *DB) SetAudioPath(ctx context.Context, id int64, path string) error {
-	_, err := db.ExecContext(ctx,
-		`UPDATE notes SET audio_path = ? WHERE id = ?`, path, id)
-	return err
-}
-
-// ClearAudioPath nulls audio_path. Called by the janitor after deleting
-// the on-disk file so subsequent queries don't reference a missing path.
-func (db *DB) ClearAudioPath(ctx context.Context, id int64) error {
-	_, err := db.ExecContext(ctx,
-		`UPDATE notes SET audio_path = NULL WHERE id = ?`, id)
-	return err
-}
-
-// AudioRef pairs a note id with its retained audio file path.
-type AudioRef struct {
-	ID   int64
-	Path string
-}
-
-// AudiosOlderThan returns every (id, path) pair where created_at < cutoff
-// AND audio_path IS NOT NULL — the janitor's worklist for cleanup.
-func (db *DB) AudiosOlderThan(ctx context.Context, cutoff time.Time) ([]AudioRef, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, audio_path FROM notes
-		WHERE audio_path IS NOT NULL AND created_at < ?
-		ORDER BY created_at ASC`, cutoff.Unix())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AudioRef
-	for rows.Next() {
-		var r AudioRef
-		if err := rows.Scan(&r.ID, &r.Path); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// AllRetainedAudios returns every (id, path) pair where audio_path IS
-// NOT NULL — no time filter. Used by startup tasks (F3 legacy path
-// normalize, orphan scan) that need to enumerate ALL retained audio,
-// not just the janitor's cleanup window.
-func (db *DB) AllRetainedAudios(ctx context.Context) ([]AudioRef, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, audio_path FROM notes
-		WHERE audio_path IS NOT NULL
-		ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AudioRef
-	for rows.Next() {
-		var r AudioRef
-		if err := rows.Scan(&r.ID, &r.Path); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// HealthReport summarizes the result of a quick DB integrity check.
-type HealthReport struct {
-	IntegrityCheck string `json:"integrity_check"`
-	QuickCheck     string `json:"quick_check"`
-	NoteCount      int64  `json:"note_count"`
-	DBSizeBytes    int64  `json:"db_size_bytes"`
-}
-
-// Health runs SQLite's PRAGMA integrity_check and quick_check plus a
-// note count and db size. integrity_check/quick_check return the
-// literal string "ok" on a healthy DB; anything else is the first
-// error message.
-func (db *DB) Health(ctx context.Context) (HealthReport, error) {
-	var rep HealthReport
-	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&rep.IntegrityCheck); err != nil {
-		return rep, fmt.Errorf("integrity_check: %w", err)
-	}
-	if err := db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&rep.QuickCheck); err != nil {
-		return rep, fmt.Errorf("quick_check: %w", err)
-	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM notes`).Scan(&rep.NoteCount); err != nil {
-		return rep, fmt.Errorf("note_count: %w", err)
-	}
-	var pageCount, pageSize int64
-	if err := db.QueryRowContext(ctx, `PRAGMA page_count`).Scan(&pageCount); err != nil {
-		return rep, fmt.Errorf("page_count: %w", err)
-	}
-	if err := db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize); err != nil {
-		return rep, fmt.Errorf("page_size: %w", err)
-	}
-	rep.DBSizeBytes = pageCount * pageSize
-	return rep, nil
-}
-
-// ArchiveAndUpdateText replaces a note's raw_text + confidence metadata
-// atomically: the old raw_text is appended to notes_history (with the
-// optional model string), then the notes row is updated. The whole
-// operation is wrapped in a transaction — if anything fails, the note
-// stays at its old text rather than ending up partial.
-//
-// Confidence/suspect pass through the same nil-pointer convention as
-// InsertNoteWithMeta: nil → store NULL (= "unknown").
-//
-// Returns the old raw_text so the caller can show a diff.
-func (db *DB) ArchiveAndUpdateText(ctx context.Context, id int64, newText, model string, meta NoteMeta) (string, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	// Defer rollback; commit() at the end overrides this if all went well.
-	defer func() { _ = tx.Rollback() }()
-
-	var oldText string
-	if err := tx.QueryRowContext(ctx, `SELECT raw_text FROM notes WHERE id = ?`, id).Scan(&oldText); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrNoteNotFound
-		}
-		return "", err
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO notes_history (note_id, raw_text, replaced_at, model)
-		VALUES (?, ?, ?, ?)`,
-		id, oldText, time.Now().Unix(), model); err != nil {
-		return "", err
-	}
-
-	var overall, worst any
-	if meta.ConfidenceOverall != nil {
-		overall = *meta.ConfidenceOverall
-	}
-	if meta.ConfidenceMin != nil {
-		worst = *meta.ConfidenceMin
-	}
-	suspect := 0
-	if meta.SuspectHallucination {
-		suspect = 1
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE notes
-		SET raw_text = ?, confidence_overall = ?, confidence_min = ?, suspect_hallucination = ?
-		WHERE id = ?`,
-		newText, overall, worst, suspect, id); err != nil {
-		return "", err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return oldText, nil
-}
-
 // MarkAnalyzed flips status from anything-but-discarded to 'analyzed' for the
 // given ids. Returns the number of rows actually updated.
 func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
@@ -537,6 +293,9 @@ func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	return int(n), nil
 }
 
+// queryNotes is the shared row-scanning helper for the list/range
+// queries above. New list-shaped queries should reuse it instead of
+// inlining the Scan + time-conversion dance.
 func queryNotes(ctx context.Context, db *DB, query string, args ...any) ([]Note, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

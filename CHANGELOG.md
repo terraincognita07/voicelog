@@ -92,6 +92,15 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Changed
 
+- **`internal/db/notes.go` split by domain.** The 562-line file became
+  five focused siblings under the same package: `notes.go` (321 — CRUD
+  + `queryNotes` helper + Note / NoteMeta / Status / ErrNoteNotFound /
+  MaxNotesInRange), `notes_search.go` (62 — FTS5 + `NoteWithRank`),
+  `notes_audio.go` (115 — `SetAudioPath` / `ClearAudioPath` /
+  `AudiosOlderThan` / `AllRetainedAudios` / `DupNote` /
+  `FindRecentByHash`), `notes_history.go` (66 — `ArchiveAndUpdateText`),
+  `notes_health.go` (40 — `HealthReport` / `Health`). All methods
+  stayed on `*DB`; no caller change.
 - **Dockerfiles relocated to `docker/`.** `Dockerfile.bot` and
   `Dockerfile.mcp` no longer sit at repo root. `docker-compose.yml`'s
   `dockerfile:` and `.github/workflows/ci.yml`'s `file:` updated to
