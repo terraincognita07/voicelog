@@ -285,6 +285,27 @@ but it ships as one release.
   bot+mcp under docker-compose could restart-loop. Distinct from
   F1/F2 (which were about `Migrate`); same user-visible symptom.
 
+### Security
+
+- **Go toolchain bumped to clear stdlib CVEs at the source.** The
+  `go` directive in `go.mod` went `1.25.5 → 1.26.1`, and CI's
+  `setup-go` went `1.25 → 1.26` (test + govulncheck jobs), matching
+  what the Docker images already build with (`golang:1.26-alpine`).
+  This patches the batch of Go standard-library advisories surfaced
+  by a one-off `osv-scanner` run (html/template, net/mail, net/url,
+  net/http, crypto/tls, crypto/x509, archive/tar, archive/zip, os —
+  ~20 CVEs). Most were already unreachable in this codebase
+  (no `html/template`, `net/mail`, `httputil`, `archive/*`, or
+  `os.Root` imports; `govulncheck`, the reachability-aware gate,
+  stayed green), but bumping the toolchain removes them at the source
+  instead of relying on reachability. `golang.org/x/sys` bumped to
+  latest for CVE-2026-39824 (`NewNTUnicodeString`, Windows-only —
+  never compiled into the Linux container, but cleared for
+  completeness). `osv-scanner` remains out of CI (it re-flags every
+  fresh Go release's stdlib advisories without a reachability filter);
+  `govulncheck` + keeping the toolchain current is the standing
+  posture.
+
 ### Tests
 
 - **Coverage big batch.** internal/telegram from 35% → 55%,
