@@ -1,0 +1,68 @@
+# One-shot, manually-triggered osv-scanner re-scan.
+#
+# Sole purpose: re-evaluate the now-patched go.mod and upload a fresh
+# SARIF so GitHub can auto-close the stale code-scanning alerts an
+# earlier osv-scanner upload opened. Whatever osv-scanner no longer
+# reports (CVEs fixed at or below the go.mod `go` directive) gets marked
+# Fixed on the next analysis for this category.
+#
+# osv-scanner is deliberately NOT part of the CI gate (see the comment
+# block in ci.yml): on a Go-only dep tree it re-flags every fresh stdlib
+# advisory with no reachability filter, which is churn, not signal.
+# govulncheck (reachability-aware) is the gate. This workflow never runs
+# on push — trigger it from the Actions tab after a Go toolchain bump,
+# then it can sit dormant or be deleted.
+#
+# CAVEATS (read before expecting magic):
+#   1. Category correlation. GitHub closes an alert only when a NEW
+#      analysis for the SAME (tool, category, ref) omits it. The original
+#      osv upload config was fully removed from history, so the category
+#      here (`osv-scanner`) may not match what opened the alerts. If the
+#      22 don't flip to Fixed after this runs, that's a category mismatch
+#      — dismiss them via the gh fallback in the PR/commit notes instead.
+#   2. Go coverage. osv-scanner reads the `go` directive in go.mod. Any
+#      CVE fixed only in a Go patch NEWER than that directive will still
+#      be reported (and stay open). Check this run's logs; if some remain,
+#      bump the go.mod directive higher and re-run.
+
+name: osv-scanner one-shot (manual cleanup)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # upload SARIF to code scanning
+  actions: read # codeql-action upload reads run metadata
+
+jobs:
+  osv-rescan:
+    name: osv-scanner re-scan + SARIF upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # osv-scanner is installed via `go install` (not the reusable
+      # action) so it compiles against a current toolchain instead of the
+      # action image's older bundled Go. Scanning go.mod is pure lockfile
+      # parsing — the toolchain version doesn't affect the findings.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: install osv-scanner
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.1
+
+      # `|| true`: a non-zero exit (findings still present) must NOT skip
+      # the upload — GitHub closes an alert only when a fresh analysis
+      # omits it, so the SARIF has to be uploaded even when some findings
+      # remain. Failing before upload would leave every alert stale.
+      - name: osv-scanner -> SARIF
+        run: osv-scanner --lockfile=./go.mod --format=sarif --output=osv.sarif ./ || true
+
+      - name: upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
