@@ -13,9 +13,12 @@ short-list (security findings, tech debt) see local-only
 These are the candidates immediately in front of us. None are committed
 to a release date yet.
 
-- ~~**Audit tooling in CI.**~~ Done 2026-05-28. `semgrep`,
-  `osv-scanner`, and `gitleaks` now run as separate jobs in
+- ~~**Audit tooling in CI.**~~ Done 2026-05-28. `semgrep` and
+  `gitleaks` now run as separate jobs in
   `.github/workflows/ci.yml`, gating merges alongside `govulncheck`.
+  `osv-scanner` was tried and dropped — for a Go-only dep tree it
+  duplicates what `govulncheck` already does with reachability,
+  while adding stdlib-patch-cycle noise.
 - **Open-source structural moves.** Move `migrations/` under
   `internal/db/migrations/`, relocate Dockerfiles into `docker/`,
   split the 600-line `README.md` into topical files under `docs/`,

@@ -124,31 +124,20 @@ jobs:
             semgrep/semgrep:1.95.0 \
             semgrep --config=p/golang --config=p/security-audit --error --metrics=off
 
-  # osv-scanner lists every vulnerable dep in the OSV database,
-  # reachable or not — complements govulncheck which only fails
-  # on reachable vulns. Installed directly via `go install` rather
-  # than the reusable workflow `osv-scanner-action@v1.9.1` because
-  # that image bundles its own Go 1.22 toolchain and our go.mod
-  # requires 1.25.5. Compiling osv-scanner with our setup-go side-
-  # steps the version mismatch.
-  osv:
-    name: osv-scanner
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.25'
-          cache: true
-
-      - name: install osv-scanner
-        run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.1
-
-      - name: osv-scanner
-        run: osv-scanner --lockfile=./go.mod ./
+  # osv-scanner was tried here as a complement to govulncheck but
+  # produces unactionable noise on Go projects: every stdlib patch
+  # release ships a fresh batch of OSV-indexed vulns
+  # (GO-YYYY-NNNN), and osv-scanner fails on all of them, called
+  # AND uncalled, with no reachability filter. govulncheck (the
+  # vuln: job above) already covers the same OSV database for Go,
+  # but with reachability analysis, so it fails only on vulns the
+  # code actually exercises. Adding osv-scanner back would mean
+  # maintaining an ignore-list of "current stdlib false positives"
+  # that churns every Go release — not worth the gate value.
+  #
+  # If a non-Go transitive ecosystem appears later (a Node SDK,
+  # a Python script, etc.), this is where osv-scanner would slot
+  # back in for those lockfiles specifically.
 
   gitleaks:
     name: gitleaks

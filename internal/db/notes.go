@@ -220,13 +220,12 @@ func (db *DB) DiscardNotes(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	// placeholders = "?,?,?" built from len(ids) — no user input
+	// is interpolated into the SQL. Values go through ExecContext's
+	// args... so SQLite binds them parameterized.
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	// nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
-	// `placeholders` is "?,?,?" built from len(ids) — no user input is
-	// interpolated into the SQL string. Values go through ExecContext's
-	// args... so SQLite binds them parameterized.
-	q := fmt.Sprintf(`UPDATE notes SET status = 'discarded' WHERE status != 'discarded' AND id IN (%s)`, placeholders)
+	q := fmt.Sprintf(`UPDATE notes SET status = 'discarded' WHERE status != 'discarded' AND id IN (%s)`, placeholders) //nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -282,12 +281,11 @@ func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
+	// Same batch-IN pattern as DiscardNotes: placeholders is built
+	// from len(ids), values go through ExecContext args parameterized.
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	// nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
-	// Same batch-IN pattern as DiscardNotes: `placeholders` is built
-	// from len(ids), values go through ExecContext args parameterized.
-	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status != 'discarded' AND id IN (%s)`, placeholders)
+	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status != 'discarded' AND id IN (%s)`, placeholders) //nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id

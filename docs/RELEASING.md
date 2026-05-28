@@ -29,20 +29,21 @@ gate.
 2. **CI green on `main`.** The badge in README must be passing for
    the commit you intend to tag. Open a fresh branch first if you
    need to land a fix.
-3. **Audit batch in CI.** Three additional jobs in
+3. **Audit batch in CI.** Two additional jobs in
    `.github/workflows/ci.yml` complement `govulncheck`:
    - `semgrep` — pattern-based findings against `p/golang` and
      `p/security-audit` rulesets. Pinned via the
      `semgrep/semgrep:1.95.0` container.
-   - `osv-scanner` — every vulnerable dep in the OSV database,
-     reachable or not (govulncheck's reachability check would
-     miss "dep is listed but the call path doesn't hit the
-     vulnerable function"). Pinned at `v1.9.1`.
    - `gitleaks` — full-history committed-secret scan.
-   All three are required to be green before a tag — they gate
-   merges into `main` the same way `govulncheck` does. If any
-   shows a finding, triage it as part of the release work, do not
-   bypass.
+   Both are required to be green before a tag. If a finding
+   appears, triage it as part of the release work; do not bypass
+   by removing the job.
+
+   (An `osv-scanner` job was tried and removed — see the comment
+   block in `ci.yml`. Short version: for a Go-only dep tree
+   `govulncheck` already covers the OSV database with
+   reachability, and `osv-scanner` adds noise from every stdlib
+   patch's fresh batch of GO-YYYY-NNNN vulns.)
 4. **Manual smoke.** `docker compose up -d` against a fresh
    `./data/`. Send a voice message; verify the bot replies; verify
    `/pending` shows it; call the `db_health` MCP tool and confirm

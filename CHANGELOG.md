@@ -29,16 +29,26 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   returning `verbose_json`) without log spam. Tests:
   `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
   `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
-- **Audit batch in CI.** Three new jobs in
+- **Audit batch in CI.** Two new jobs in
   `.github/workflows/ci.yml` complement the existing `govulncheck`
-  gate. All three fail the PR on any finding:
+  gate. Both fail the PR on any finding:
   - `semgrep` — `p/golang` + `p/security-audit` rulesets, pinned via
-    `semgrep/semgrep:1.95.0` container, `--error` exit code.
-  - `osv-scanner` — pinned at `v1.9.1`. Lists every vulnerable
-    dep in the OSV database, reachable or not (govulncheck only
-    fails on reachable vulns — `osv-scanner` is the broader sweep).
+    `semgrep/semgrep:1.95.0` container, `--error` exit code. Two
+    pre-existing false-positives in `internal/db/notes.go` (the
+    batch-IN `fmt.Sprintf(...placeholders)` pattern, where
+    placeholders come from `len(ids)` and values bind through
+    `ExecContext` args) are suppressed with inline
+    `//nosemgrep:` comments + a short explanation.
   - `gitleaks` — `gitleaks/gitleaks-action@v2`, `fetch-depth: 0`
     so the scan sees every ancestor commit, not just `HEAD`.
+
+  An `osv-scanner` job was tried and removed: for Go projects it
+  produces non-actionable noise (every stdlib patch ships a fresh
+  batch of OSV-indexed vulns; `osv-scanner` fails on all of them
+  with no reachability filter). `govulncheck` already covers the
+  same OSV database for Go with reachability analysis. The job
+  stub left as a comment in `ci.yml` flags where to slot
+  `osv-scanner` back in if a non-Go transitive ecosystem appears.
 - **Open-source readiness batch:** `Makefile` with `make test /
   test-race / build / vet / lint / vuln / fmt / tidy / ci / clean`
   mirroring CI; `.editorconfig` for tab/space consistency;
