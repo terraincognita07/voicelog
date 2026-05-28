@@ -11,7 +11,7 @@ Self-hosted Telegram voice journal with Claude analysis via MCP.
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)](https://github.com/terraincognita07/voicelog)
 [![Self-hosted](https://img.shields.io/badge/Self--hosted-yes-2ea44f)](https://github.com/terraincognita07/voicelog)
 
-Send voice messages to your private Telegram bot. They are
+Send voice messages (or plain text) to your private Telegram bot. Voice is
 transcribed locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 and stored in SQLite. Then in any Claude conversation, ask
 *"what was I worrying about last week?"* — Claude reads the corpus via
@@ -28,6 +28,24 @@ an MCP server you self-host.
                                        ▼
     Claude.ai ← MCP over HTTPS ── nginx ── | voicelog-mcp  |
 ```
+
+## Features
+
+- **Voice + text capture** — speak on the go or type when you can't; both
+  become searchable notes with a one-tap discard.
+- **Local transcription** — whisper.cpp on your own box, nothing leaves it.
+- **Query via Claude (MCP)** — search, summarize and review your corpus on
+  demand; 12 MCP tools (see [docs/MCP.md](docs/MCP.md)).
+- **Russian-aware search** — Cyrillic queries are stemmed (Snowball) so
+  searching `работа` also finds `работе`/`работу`; Latin terms stay exact.
+- **Fix what whisper misheard** — `✏️ Edit` a note's text right in Telegram
+  (previous version archived), or have Claude correct / `retranscribe` it.
+- **Self-improving accuracy** — Claude can spot recurring names/jargon across
+  the corpus and add them to the whisper vocabulary via MCP (`add_vocab`).
+- **Button-driven UI** — pending queue, day-grouped lists, status filters,
+  discard/restore — all inline, typed commands are a fallback.
+- **Single-user, self-hosted** — Telegram allow-list + bearer-token MCP;
+  pure-Go (`CGO_ENABLED=0`), three small containers.
 
 ## Why this exists
 
