@@ -76,6 +76,41 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
 
 Tool schemas are visible via standard MCP `tools/list`.
 
+## Asking Claude (example prompts)
+
+You drive voicelog from any Claude conversation in plain language — you don't
+name the tools, Claude picks them. Not sure what's possible? Just ask Claude
+**"what can you do with voicelog?"** and it lists its tools — the chat
+equivalent of looking at the bot's buttons.
+
+Read / analyze:
+
+- *"what did I record yesterday / last week / in May?"* → `get_notes_in_range`
+- *"find notes about insomnia"*, *"when did I mention Kolya?"* → `search_notes`
+  (Cyrillic terms are stemmed, so dictionary forms match inflected ones)
+- *"show my pending notes"*, *"what's in my queue?"* → `list_pending_notes`
+- *"show note 42 in full"* → `get_note`
+- *"check the database integrity"* → `db_health`
+
+Write (Claude will do these, but they change your journal):
+
+- *"mark 12 and 13 as analyzed"* → `mark_analyzed`
+- *"discard notes 5 and 6"* / *"restore note 7"* → `discard_notes` / `restore_note`
+- *"re-transcribe note 42"* → `retranscribe` (only if audio retention is on
+  and the file hasn't aged out)
+- *"whisper keeps misspelling 'Иннокентий' — add it to the vocabulary"* →
+  `add_vocab`; *"what's in the vocabulary?"* → `list_vocab`;
+  *"remove X from the vocabulary"* → `remove_vocab`
+
+What Claude **can't** do from chat (by design — so you don't wait on it):
+
+- **Edit a note's text directly.** There is no MCP edit tool on purpose; fix
+  the text with the bot's `✏️ Edit` button, or ask Claude to `retranscribe`
+  (re-runs whisper on the retained audio).
+- **Wipe the whole vocabulary.** Bot-only (`/vocab clear`, two-step confirm).
+- **Create a brand-new note from chat.** You populate the journal (voice or
+  text in the bot) so Claude's analysis never mixes with your own entries.
+
 ## Claude.ai web — needs public HTTPS
 
 Claude.ai's *Add custom connector* dialog currently exposes **only OAuth

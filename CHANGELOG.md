@@ -9,6 +9,8 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-28
+
 ### Added
 
 - Vocabulary management over MCP. Three new tools — `list_vocab`,
@@ -38,10 +40,10 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 ### Fixed
 
 - MCP server reports its real version. `serverVersion` in
-  `internal/mcp/server.go` was stuck at `0.1.0` (the value it advertises
-  to clients in the initialize handshake); bumped to `0.2.1`. Added a
-  release-checklist step in `docs/RELEASING.md` so it's bumped with each
-  tag instead of silently lagging.
+  `internal/mcp/server.go` had been stuck at `0.1.0` (the value it
+  advertises to clients in the initialize handshake); it now tracks the
+  release tag (`0.3.0` here). A release-checklist step in
+  `docs/RELEASING.md` keeps it in sync instead of silently lagging.
 - `scripts/smoke-mcp.sh` per-tool checks now actually run. They were
   invoked through `bash -c` subshells, which don't inherit the script's
   shell functions or non-exported vars — so 5 of 8 checks died with

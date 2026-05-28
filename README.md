@@ -35,7 +35,8 @@ an MCP server you self-host.
   become searchable notes with a one-tap discard.
 - **Local transcription** — whisper.cpp on your own box, nothing leaves it.
 - **Query via Claude (MCP)** — search, summarize and review your corpus on
-  demand; 12 MCP tools (see [docs/MCP.md](docs/MCP.md)).
+  demand in plain language; 12 MCP tools, with example prompts in
+  [docs/MCP.md](docs/MCP.md#asking-claude-example-prompts).
 - **Russian-aware search** — Cyrillic queries are stemmed (Snowball) so
   searching `работа` also finds `работе`/`работу`; Latin terms stay exact.
 - **Fix what whisper misheard** — `✏️ Edit` a note's text right in Telegram
