@@ -22,7 +22,7 @@ queue, no background workers beyond a few goroutines, no caches, no ORM.
   No auth, internal compose network only.
 - **bot** — long-polls Telegram, downloads voice messages, runs ffmpeg →
   whisper, persists transcriptions, owns audio retention copy step.
-- **mcp** — HTTP server exposing 11 tools to Claude. Bearer-token auth.
+- **mcp** — HTTP server exposing 9 tools to Claude. Bearer-token auth.
   Runs the DB maintenance loop (weekly WAL checkpoint + monthly VACUUM).
 
 ## Code layout
@@ -34,12 +34,16 @@ voicelog/
 │   └── mcp/main.go          # wiring + env parsing + bearer auth
 ├── internal/
 │   ├── audio/               # opt-in audio retention (SaveOriginal + Janitor)
+│   ├── config/              # env parsing (MustEnv, ParseFloat01)
 │   ├── db/                  # all SQL lives here
+│   │   └── migrations/      # forward-only NNN_name.sql + embed.FS wrapper
+│   ├── diag/                # gated pprof endpoint (PPROF_ADDR, loopback-only)
 │   ├── diskguard/           # build-tagged free-space probe (unix / other)
 │   ├── mcp/                 # MCP tool registrations
+│   ├── promptbuilder/       # whisper prompt assembly (base prompt + vocab)
 │   ├── telegram/            # bot handlers, locale, list views, vocab UI
 │   └── whisper/             # HTTP client to whisper.cpp
-└── migrations/              # forward-only NNN_name.sql + embed.FS wrapper
+└── docker/                  # Dockerfile.bot + Dockerfile.mcp
 ```
 
 ## Layering rules
@@ -55,6 +59,9 @@ Strict — enforced by review, not by build:
 | `internal/whisper` | HTTP client to whisper.cpp | parse user input |
 | `internal/audio` | retain raw .oga, sweep old files | mutate `notes` table directly (delegate to db) |
 | `internal/diskguard` | platform-specific syscall | depend on anything except `syscall` |
+| `internal/config` | startup env parsing (`MustEnv`, `ParseFloat01`) | hold runtime state |
+| `internal/promptbuilder` | assemble whisper prompt (base + vocab) | talk to Telegram / MCP |
+| `internal/diag` | gated pprof listener (`PPROF_ADDR`, loopback-only) | run by default / bind non-loopback |
 
 ## Persistence
 
@@ -103,7 +110,7 @@ Nine tools as of 2026-05-28:
 | `discard_notes` | yes | batch, reversible |
 | `restore_note` | yes | only `discarded → pending` |
 | `retranscribe` | yes | requires audio retention; archives to `notes_history` |
-| `db_health` | no | `PRAGMA integrity_check` + counts |
+| `db_health` | no | `PRAGMA integrity_check` (+ optional `quick` mode) + counts |
 
 Every tool sets `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
 `OpenWorldHint` explicitly.

@@ -19,13 +19,16 @@ to a release date yet.
   `osv-scanner` was tried and dropped — for a Go-only dep tree it
   duplicates what `govulncheck` already does with reachability,
   while adding stdlib-patch-cycle noise.
-- **Open-source structural moves.** Move `migrations/` under
-  `internal/db/migrations/`, relocate Dockerfiles into `docker/`,
-  split the 600-line `README.md` into topical files under `docs/`,
-  and split the larger Go files (`internal/db/notes.go`,
-  `internal/mcp/server.go`) by domain.
-- **Fuzz corpus** for the callback-data parsers and the FTS5 query
-  path. Existing code is defensive but unproven against random inputs.
+- ~~**Open-source structural moves.**~~ Done 2026-05-28. `migrations/`
+  moved under `internal/db/migrations/`, Dockerfiles relocated to
+  `docker/`, `README.md` split into topical files under `docs/`, and
+  `internal/db/notes.go` + `internal/mcp/server.go` split by domain.
+- ~~**Fuzz corpus**~~ Done 2026-05-28. `go test -fuzz` targets for the
+  callback-data parsers, the FTS5 query path, the vocab term, and
+  `whisper.Result.Aggregate` (`internal/telegram/state_fuzz_test.go`,
+  `internal/db/fuzz_test.go`, `internal/whisper/aggregate_fuzz_test.go`).
+
+Nothing is firmly queued as the immediate next item — see Mid-term.
 
 ## Mid-term
 

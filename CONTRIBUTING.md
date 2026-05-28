@@ -57,7 +57,7 @@ go run ./cmd/bot                 # bot on host, faster iteration than docker
   with both `en` and `ru` entries. `locale_test.go::TestLocalesAreComplete`
   will fail otherwise.
 - **DB schema** changes go through **forward-only** SQL migrations in
-  `migrations/`. Don't edit a shipped migration; add a new file. The
+  `internal/db/migrations/`. Don't edit a shipped migration; add a new file. The
   commit body MUST name the rollback path even when trivial.
 - **MCP tool annotations**: every new tool sets `ReadOnlyHint`,
   `DestructiveHint`, `IdempotentHint`, `OpenWorldHint` explicitly.
