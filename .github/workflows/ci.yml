@@ -118,29 +118,31 @@ jobs:
             semgrep/semgrep:1.95.0 \
             semgrep --config=p/golang --config=p/security-audit --error --metrics=off
 
-  # osv-scanner reads go.mod (and indirectly go.sum) plus any
-  # lockfiles to look up CVE matches in the OSV database.
-  # govulncheck already runs in its own job and is stricter about
-  # *reachability*; osv-scanner complements it by listing *every*
-  # vulnerable dep, reachable or not. Pinned version like govulncheck
-  # so a tool update doesn't change behavior.
-  #
-  # Reusable workflow caller (job-level `uses:`) — no `name:` allowed
-  # here per GitHub spec. The reusable needs three permissions:
-  # contents:read to scan the tree, security-events:write to upload
-  # SARIF to the Security tab, and actions:read because the workflow
-  # reads its own metadata at runtime. Caller workflow defaults to
-  # `actions: none` so the latter must be granted explicitly.
+  # osv-scanner lists every vulnerable dep in the OSV database,
+  # reachable or not — complements govulncheck which only fails
+  # on reachable vulns. Installed directly via `go install` rather
+  # than the reusable workflow `osv-scanner-action@v1.9.1` because
+  # that image bundles its own Go 1.22 toolchain and our go.mod
+  # requires 1.25.5. Compiling osv-scanner with our setup-go side-
+  # steps the version mismatch.
   osv:
+    name: osv-scanner
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
-      actions: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v1.9.1
-    with:
-      scan-args: |-
-        --lockfile=./go.mod
-        ./
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: install osv-scanner
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@v1.9.1
+
+      - name: osv-scanner
+        run: osv-scanner --lockfile=./go.mod ./
 
   gitleaks:
     name: gitleaks
