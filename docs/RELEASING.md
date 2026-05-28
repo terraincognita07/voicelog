@@ -29,15 +29,20 @@ gate.
 2. **CI green on `main`.** The badge in README must be passing for
    the commit you intend to tag. Open a fresh branch first if you
    need to land a fix.
-3. **Audit batch.** Run the security tooling that lives outside
-   `make ci`:
-   - `gitleaks detect --source .` — committed secret scan
-   - `osv-scanner --lockfile go.mod` — transitive vuln scan beyond
-     govulncheck's reachability rules
-   - `semgrep --config p/golang` — pattern-based findings
-   (These are not yet wired into CI — `docs/ROADMAP.md` tracks that
-   work. For now, run them manually and triage findings before the
-   tag.)
+3. **Audit batch in CI.** Three additional jobs in
+   `.github/workflows/ci.yml` complement `govulncheck`:
+   - `semgrep` — pattern-based findings against `p/golang` and
+     `p/security-audit` rulesets. Pinned via the
+     `semgrep/semgrep:1.95.0` container.
+   - `osv-scanner` — every vulnerable dep in the OSV database,
+     reachable or not (govulncheck's reachability check would
+     miss "dep is listed but the call path doesn't hit the
+     vulnerable function"). Pinned at `v1.9.1`.
+   - `gitleaks` — full-history committed-secret scan.
+   All three are required to be green before a tag — they gate
+   merges into `main` the same way `govulncheck` does. If any
+   shows a finding, triage it as part of the release work, do not
+   bypass.
 4. **Manual smoke.** `docker compose up -d` against a fresh
    `./data/`. Send a voice message; verify the bot replies; verify
    `/pending` shows it; call the `db_health` MCP tool and confirm

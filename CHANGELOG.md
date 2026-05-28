@@ -29,6 +29,16 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   returning `verbose_json`) without log spam. Tests:
   `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
   `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
+- **Audit batch in CI.** Three new jobs in
+  `.github/workflows/ci.yml` complement the existing `govulncheck`
+  gate. All three fail the PR on any finding:
+  - `semgrep` — `p/golang` + `p/security-audit` rulesets, pinned via
+    `semgrep/semgrep:1.95.0` container, `--error` exit code.
+  - `osv-scanner` — pinned at `v1.9.1`. Lists every vulnerable
+    dep in the OSV database, reachable or not (govulncheck only
+    fails on reachable vulns — `osv-scanner` is the broader sweep).
+  - `gitleaks` — `gitleaks/gitleaks-action@v2`, `fetch-depth: 0`
+    so the scan sees every ancestor commit, not just `HEAD`.
 - **Open-source readiness batch:** `Makefile` with `make test /
   test-race / build / vet / lint / vuln / fmt / tidy / ci / clean`
   mirroring CI; `.editorconfig` for tab/space consistency;

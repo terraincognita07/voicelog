@@ -13,10 +13,9 @@ short-list (security findings, tech debt) see local-only
 These are the candidates immediately in front of us. None are committed
 to a release date yet.
 
-- **Audit tooling in CI.** Wire `semgrep` (Go ruleset), `osv-scanner`,
-  and `gitleaks` as separate jobs. govulncheck is already pinned at
-  v1.1.4; the others fill the gaps it can't reach (pattern-based
-  findings, transitive dep CVEs, accidentally-committed secrets).
+- ~~**Audit tooling in CI.**~~ Done 2026-05-28. `semgrep`,
+  `osv-scanner`, and `gitleaks` now run as separate jobs in
+  `.github/workflows/ci.yml`, gating merges alongside `govulncheck`.
 - **Open-source structural moves.** Move `migrations/` under
   `internal/db/migrations/`, relocate Dockerfiles into `docker/`,
   split the 600-line `README.md` into topical files under `docs/`,

@@ -94,3 +94,56 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.95.0
+    steps:
+      - uses: actions/checkout@v6
+
+      # p/golang   — language-specific anti-patterns
+      # p/security-audit — broad OWASP-style findings
+      # --error      — non-zero exit on any finding, gating the PR
+      # Pin via the container image tag above. Bump intentionally
+      # when you want a fresh rule set.
+      - name: semgrep scan
+        run: semgrep --config=p/golang --config=p/security-audit --error --metrics=off
+
+  # osv-scanner reads go.mod (and indirectly go.sum) plus any
+  # lockfiles to look up CVE matches in the OSV database.
+  # govulncheck already runs in its own job and is stricter about
+  # *reachability*; osv-scanner complements it by listing *every*
+  # vulnerable dep, reachable or not. Pinned version like govulncheck
+  # so a tool update doesn't change behavior.
+  # Called as a reusable workflow (job-level `uses:`), not a step.
+  osv:
+    name: osv-scanner
+    permissions:
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v1.9.1
+    with:
+      scan-args: |-
+        --lockfile=./go.mod
+        ./
+
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Full history needed — committed secrets can be in any
+      # ancestor commit; a shallow checkout would miss them.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
