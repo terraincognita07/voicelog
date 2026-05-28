@@ -9,6 +9,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP server reports its real version. `serverVersion` in
+  `internal/mcp/server.go` was stuck at `0.1.0` (the value it advertises
+  to clients in the initialize handshake); bumped to `0.2.1`. Added a
+  release-checklist step in `docs/RELEASING.md` so it's bumped with each
+  tag instead of silently lagging.
+
 ## [0.2.1] — 2026-05-28
 
 ### Fixed
@@ -56,7 +64,8 @@ but it ships as one release.
   via `setMyCommands`.
 - **i18n via `BOT_LOCALE`** (en default, ru opt-in). All user-facing
   strings go through `internal/telegram/locale.go`.
-- Day-of-week labels for older dates (`Mon, May 26` / `Пн, 26 мая`).
+- Day-of-week labels for older dates (e.g. `Mon, May 26`; localized
+  under `BOT_LOCALE=ru`).
 - `[📖 Show full]` button on truncated saved-reply previews.
 - `[🗑 Clear all]` mass-discard for `/pending` with two-step confirm.
 - `c.Notify(tele.Typing)` during transcription so the bot doesn't

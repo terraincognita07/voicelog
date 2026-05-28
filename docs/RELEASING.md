@@ -80,6 +80,13 @@ gate.
    MINOR / PATCH per the rules above. When in doubt, prefer the
    higher bump — easier to explain "we skipped v0.4 because v0.5
    added that one breaking thing" than to retroactively re-tag.
+8. **Bump `serverVersion`** in `internal/mcp/server.go` to the version
+   you're about to tag. It's the version the MCP server reports to
+   clients in the initialize handshake; it's a hardcoded constant, so
+   it silently lags unless bumped here, in the same commit as the tag.
+   (If this ever becomes a chore, inject it via `-ldflags "-X
+   github.com/terraincognita07/voicelog/internal/mcp.serverVersion=…"`
+   from `git describe` and make it a `var`.)
 
 ## Cutting the tag
 

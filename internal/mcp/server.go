@@ -24,7 +24,7 @@ import (
 
 const (
 	serverName    = "voicelog"
-	serverVersion = "0.1.0"
+	serverVersion = "0.2.1"
 )
 
 // mcpNote is the wire shape every voicelog tool returns. Mirrors the
