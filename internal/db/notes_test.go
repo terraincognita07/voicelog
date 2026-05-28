@@ -173,6 +173,59 @@ func TestSearchNotes(t *testing.T) {
 	}
 }
 
+// TestSearchNotes_RussianMorphology is the real contract for the Snowball
+// query stemmer: searching by the dictionary form of a Russian word must
+// find its inflected forms in the corpus. Before stemming, "работа" returned
+// 0 hits for notes containing "работе". English precision must stay intact.
+func TestSearchNotes_RussianMorphology(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	seed := []string{
+		"Думал о работе весь вечер",
+		"На работе был тяжёлый день",
+		"Позвонила мама, говорили долго",
+		"Завтра встреча с врачом",
+		"Купил молоко и хлеба",
+		"В холодильнике нет молока",
+		"meeting about the cat",
+	}
+	for _, s := range seed {
+		if _, err := d.InsertNote(ctx, s, 5); err != nil {
+			t.Fatalf("seed %q: %v", s, err)
+		}
+	}
+
+	cases := []struct {
+		query   string
+		wantMin int
+		note    string
+	}{
+		{"работа", 2, "dictionary form finds both 'работе' notes"},
+		{"маме", 1, "finds 'мама'"},
+		{"говорить", 1, "finds 'говорили'"},
+		{"молоко", 2, "finds 'молоко' and 'молока'"},
+	}
+	for _, c := range cases {
+		hits, err := d.SearchNotes(ctx, c.query, 20, false)
+		if err != nil {
+			t.Fatalf("search %q: %v", c.query, err)
+		}
+		if len(hits) < c.wantMin {
+			t.Errorf("search %q: got %d hits, want >= %d (%s)", c.query, len(hits), c.wantMin, c.note)
+		}
+	}
+
+	// English must NOT be prefix-expanded — "meet" should not pull "meeting".
+	hits, err := d.SearchNotes(ctx, "meet", 20, false)
+	if err != nil {
+		t.Fatalf("search 'meet': %v", err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("English 'meet' must not match 'meeting' (precision preserved), got %d", len(hits))
+	}
+}
+
 func TestSearchNotesExcludesDiscardedByDefault(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)

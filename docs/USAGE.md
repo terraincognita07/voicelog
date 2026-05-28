@@ -4,6 +4,14 @@ Reply language is selected via `BOT_LOCALE` (`en` default, `ru` opt-in);
 commands themselves are not translated. Add more locales by appending to
 the `locales` map in `internal/telegram/locale.go`.
 
+## Capturing notes
+
+- **Voice / audio message** — transcribed by whisper.cpp, stored as a note.
+- **Plain text message** — stored verbatim as a note (no whisper). Use it
+  when you can't speak (meeting, quiet place). Same saved-reply + `[🗑 Discard]`
+  button as a voice note. (Text that is a `/command`, a menu-button tap, or a
+  reply to the `/vocab` Add prompt is handled by those flows, not stored.)
+
 ## Commands
 
 - `/pending` — last 20 pending notes (id, time, first 80 chars)

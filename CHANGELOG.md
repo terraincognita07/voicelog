@@ -9,6 +9,19 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Added
+
+- Plain-text note capture. Sending the bot a normal text message now stores
+  it as a note (no whisper, duration 0), with the same saved-reply and
+  `[🗑 Discard]` button a voice note gets — for logging when you can't speak.
+  Commands, menu-button taps, and the `/vocab` Add force-reply are unaffected.
+- Russian-aware full-text search. `search_notes` now stems bare Cyrillic
+  query words (Snowball Russian) and prefix-matches them, so searching the
+  dictionary form (`работа`) finds inflected forms in the corpus
+  (`работе`, `работу`). Latin terms are matched exactly — English precision
+  is unchanged. Query-side only: no migration, the FTS5 index stays plain
+  `unicode61`. New dependency: `github.com/kljensen/snowball` (pure Go, MIT).
+
 ### Fixed
 
 - MCP server reports its real version. `serverVersion` in

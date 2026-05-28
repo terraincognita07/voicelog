@@ -260,22 +260,41 @@ func (tb *Bot) cbVocabClearNo(c tele.Context) error {
 	return c.Respond()
 }
 
-// onText handles plain text messages. Today's only use: the /vocab "Add"
-// force-reply. When the user replies to the prompt sent by
-// cbVocabAddPrompt, we parse the reply as space-separated terms. Reply
-// detection: the message's ReplyTo must point to a message authored by
-// this bot AND its text must exactly equal VocabAddPrompt.
+// onText handles plain text messages. Two paths:
+//
+//  1. The /vocab "Add" force-reply: when the user replies to the prompt sent
+//     by cbVocabAddPrompt (ReplyTo points at a bot message whose text equals
+//     VocabAddPrompt), the reply is parsed as space-separated vocab terms.
+//  2. Otherwise the text is captured as a note — the typed-input counterpart
+//     to a voice message, for when the user can't speak (meeting, quiet
+//     place). No whisper, no audio, no dedup; just store and saved-reply.
+//
+// Reply-keyboard taps (Pending/Recent/Vocab/Help) never reach here —
+// telebot routes those to their registered text handlers before OnText.
 func (tb *Bot) onText(c tele.Context) error {
 	msg := c.Message()
-	if msg == nil || msg.ReplyTo == nil {
+	if msg == nil {
 		return nil
 	}
-	if msg.ReplyTo.Sender == nil || tb.bot.Me == nil || msg.ReplyTo.Sender.ID != tb.bot.Me.ID {
-		return nil
+	if tb.isVocabAddReply(msg) {
+		return tb.handleVocabAddReply(c, msg)
 	}
-	if strings.TrimSpace(msg.ReplyTo.Text) != tb.msg.VocabAddPrompt {
-		return nil
+	return tb.saveTextNote(c, msg)
+}
+
+// isVocabAddReply reports whether msg is a reply to the bot's /vocab "Add"
+// force-reply prompt.
+func (tb *Bot) isVocabAddReply(msg *tele.Message) bool {
+	if msg.ReplyTo == nil || msg.ReplyTo.Sender == nil || tb.bot.Me == nil {
+		return false
 	}
+	if msg.ReplyTo.Sender.ID != tb.bot.Me.ID {
+		return false
+	}
+	return strings.TrimSpace(msg.ReplyTo.Text) == tb.msg.VocabAddPrompt
+}
+
+func (tb *Bot) handleVocabAddReply(c tele.Context, msg *tele.Message) error {
 	terms := strings.Fields(msg.Text)
 	if len(terms) == 0 {
 		return nil
@@ -295,6 +314,26 @@ func (tb *Bot) onText(c tele.Context) error {
 		return c.Send(confirmation + "\n\n" + body)
 	}
 	return c.Send(confirmation+"\n\n"+body, kb)
+}
+
+// saveTextNote stores a plain text message as a note (duration 0, no audio,
+// no confidence signals) and ships the same saved-reply + discard button a
+// voice note gets, so typed and spoken capture feel identical.
+func (tb *Bot) saveTextNote(c tele.Context, msg *tele.Message) error {
+	text := strings.TrimSpace(msg.Text)
+	if text == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := tb.db.InsertNote(ctx, text, 0)
+	if err != nil {
+		return tb.errReply(c, "insert note", err)
+	}
+	pending, _ := tb.db.CountPending(ctx)
+	preview := previewText(text, savedPreviewLen)
+	truncated := len([]rune(strings.ReplaceAll(text, "\n", " "))) > savedPreviewLen
+	return c.Send(tb.msg.Recorded(id, 0, pending, preview, false), tb.discardMarkup(id, truncated))
 }
 
 // Ensure db package is referenced (avoids unused import in fast-edit

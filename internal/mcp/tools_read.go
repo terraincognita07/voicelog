@@ -161,6 +161,9 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 	tool := mcpsdk.NewTool("search_notes",
 		mcpsdk.WithDescription("Full-text search over note transcriptions using SQLite FTS5. "+
 			"Query supports the FTS5 syntax: bare words (AND), \"phrase\", term*, term1 OR term2. "+
+			"Bare Cyrillic words are automatically stemmed and prefix-matched (Russian "+
+			"morphology), so searching the dictionary form 'работа' also finds 'работе'/'работу'. "+
+			"Latin terms are matched exactly. "+
 			"Results sorted by bm25 rank (lower is better). Each hit includes a 'snippet' "+
 			"field — ~30 tokens around the match with the matched term wrapped in << >> "+
 			"and elided context shown as '...'. Use 'snippet' for dense context; 'raw_text' "+

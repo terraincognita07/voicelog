@@ -18,7 +18,10 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
   `status="discarded"` to surface them. Hard cap 500 rows per response.
 - **`search_notes(query: string, limit?: int = 20, include_discarded?: bool = false)`** —
   SQLite FTS5 MATCH. Supports bare words (AND), `"phrase"`, `term*`,
-  `term1 OR term2`. Results sorted by bm25 rank (lower = better). Each hit
+  `term1 OR term2`. Bare Cyrillic words are automatically stemmed and
+  prefix-matched (Russian morphology) — searching `работа` also finds
+  `работе`/`работу`; Latin terms match exactly. Results sorted by bm25
+  rank (lower = better). Each hit
   includes a `snippet` field — ~30 tokens around the match with the
   matched term wrapped in `<<` / `>>` and elided context shown as `...`.
   Discarded notes are filtered out by default; opt in via `include_discarded`.
