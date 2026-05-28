@@ -100,18 +100,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    container:
-      image: semgrep/semgrep:1.95.0
     steps:
       - uses: actions/checkout@v6
 
-      # p/golang   — language-specific anti-patterns
-      # p/security-audit — broad OWASP-style findings
-      # --error      — non-zero exit on any finding, gating the PR
-      # Pin via the container image tag above. Bump intentionally
-      # when you want a fresh rule set.
+      # Run semgrep via `docker run` from the host instead of using
+      # GitHub's `container:` field — the semgrep image is Python-
+      # based without Node.js, which would break actions/checkout
+      # if it executed inside the container. Pinning by image tag.
+      #
+      # Rulesets:
+      #   p/golang         — language-specific anti-patterns
+      #   p/security-audit — broad OWASP-style findings
+      # --error: non-zero exit on any finding, so this gates the PR.
       - name: semgrep scan
-        run: semgrep --config=p/golang --config=p/security-audit --error --metrics=off
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/src" -w /src \
+            semgrep/semgrep:1.95.0 \
+            semgrep --config=p/golang --config=p/security-audit --error --metrics=off
 
   # osv-scanner reads go.mod (and indirectly go.sum) plus any
   # lockfiles to look up CVE matches in the OSV database.
@@ -119,12 +124,18 @@ jobs:
   # *reachability*; osv-scanner complements it by listing *every*
   # vulnerable dep, reachable or not. Pinned version like govulncheck
   # so a tool update doesn't change behavior.
-  # Called as a reusable workflow (job-level `uses:`), not a step.
+  #
+  # Reusable workflow caller (job-level `uses:`) — no `name:` allowed
+  # here per GitHub spec. The reusable needs three permissions:
+  # contents:read to scan the tree, security-events:write to upload
+  # SARIF to the Security tab, and actions:read because the workflow
+  # reads its own metadata at runtime. Caller workflow defaults to
+  # `actions: none` so the latter must be granted explicitly.
   osv:
-    name: osv-scanner
     permissions:
       contents: read
       security-events: write
+      actions: read
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v1.9.1
     with:
       scan-args: |-
