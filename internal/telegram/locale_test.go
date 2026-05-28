@@ -25,6 +25,7 @@ func TestLocalesAreComplete(t *testing.T) {
 				"BadID":              m.BadID,
 				"DiscardBtn":         m.DiscardBtn,
 				"RestoreBtn":         m.RestoreBtn,
+				"EditBtn":            m.EditBtn,
 				"MenuPending":        m.MenuPending,
 				"MenuRecent":         m.MenuRecent,
 				"MenuVocab":          m.MenuVocab,
@@ -75,6 +76,14 @@ func TestLocalesAreComplete(t *testing.T) {
 			}
 			if m.RestoredReply == nil || m.RestoredReply(1, "x") == "" || m.RestoredReply(1, "") == "" {
 				t.Error("RestoredReply missing or returns empty")
+			}
+			// EditPrompt must contain the id as its only number so onText can
+			// recover it from a force-reply (see matchEditPrompt).
+			if m.EditPrompt == nil || m.EditPrompt(42) == "" || !strings.Contains(m.EditPrompt(42), "42") {
+				t.Error("EditPrompt missing, empty, or does not contain the id")
+			}
+			if m.EditUpdated == nil || m.EditUpdated(1, "x") == "" || m.EditUpdated(1, "") == "" {
+				t.Error("EditUpdated missing or returns empty")
 			}
 			if m.VocabList == nil || m.VocabList(nil) == "" || m.VocabList([]string{"a"}) == "" {
 				t.Error("VocabList missing or returns empty")
@@ -153,7 +162,7 @@ func TestLocalesAreComplete(t *testing.T) {
 			expectedErrLabels := []string{
 				"tmp dir", "download from telegram", "whisper", "insert note",
 				"list pending", "list recent", "refresh",
-				"discard", "restore", "clear", "mark discarded",
+				"discard", "restore", "clear", "mark discarded", "edit note",
 				"vocab list", "vocab add", "vocab del", "vocab clear", "vocab rm",
 			}
 			if m.Errors == nil {

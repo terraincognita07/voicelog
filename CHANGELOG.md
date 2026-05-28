@@ -11,6 +11,12 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Added
 
+- Edit a note's text from Telegram. Live saved-note replies now carry an
+  `[✏️ Edit]` button next to `[🗑 Discard]`: tap it, reply to the force-reply
+  prompt with the corrected text, and the note's `raw_text` is replaced. The
+  previous version is archived to `notes_history` (reversible at the SQL
+  level). Not offered on discarded notes. Fixes the "whisper misheard a word"
+  case without needing the MCP `retranscribe` tool or retained audio.
 - Plain-text note capture. Sending the bot a normal text message now stores
   it as a note (no whisper, duration 0), with the same saved-reply and
   `[🗑 Discard]` button a voice note gets — for logging when you can't speak.

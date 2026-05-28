@@ -247,3 +247,4 @@ MIT — see [LICENSE](LICENSE).
 - [mcp-go](https://github.com/mark3labs/mcp-go) — mark3labs
 - [telebot.v3](https://github.com/tucnak/telebot) — Tucnak
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — Jan Mercl
+- [snowball](https://github.com/kljensen/snowball) — Kyle Jensen (Russian stemming for search)

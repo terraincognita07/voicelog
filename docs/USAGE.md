@@ -34,6 +34,11 @@ the `locales` map in `internal/telegram/locale.go`.
   startup via `setMyCommands`; no BotFather configuration needed.
 - **Inline 🗑 button** under every saved-note reply — one tap marks the
   just-recorded note as `discarded` without typing `/delete <id>`.
+- **Inline ✏️ Edit button** next to 🗑 on a live note — tap it, the bot
+  sends a force-reply prompt, reply with the corrected text and the note's
+  `raw_text` is replaced (previous version archived to `notes_history`, so
+  it's reversible at the SQL level). Useful when whisper misheard a word.
+  Not offered on discarded notes (restore first).
 - **Day-grouped lists** on `/pending` and `/recent`: notes are split into
   `📅 today (N)` / `📅 yesterday (N)` / `📅 2026-05-26 (N)` sections.
   Today is always expanded; older days are collapsed and shown as a

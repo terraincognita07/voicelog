@@ -279,6 +279,9 @@ func (tb *Bot) onText(c tele.Context) error {
 	if tb.isVocabAddReply(msg) {
 		return tb.handleVocabAddReply(c, msg)
 	}
+	if id, ok := tb.editReplyNoteID(msg); ok {
+		return tb.applyNoteEdit(c, id, msg.Text)
+	}
 	return tb.saveTextNote(c, msg)
 }
 
@@ -292,6 +295,18 @@ func (tb *Bot) isVocabAddReply(msg *tele.Message) bool {
 		return false
 	}
 	return strings.TrimSpace(msg.ReplyTo.Text) == tb.msg.VocabAddPrompt
+}
+
+// editReplyNoteID reports whether msg is a reply to an [✏️ Edit] force-reply
+// prompt and, if so, the note id it targets.
+func (tb *Bot) editReplyNoteID(msg *tele.Message) (int64, bool) {
+	if msg.ReplyTo == nil || msg.ReplyTo.Sender == nil || tb.bot.Me == nil {
+		return 0, false
+	}
+	if msg.ReplyTo.Sender.ID != tb.bot.Me.ID {
+		return 0, false
+	}
+	return tb.matchEditPrompt(strings.TrimSpace(msg.ReplyTo.Text))
 }
 
 func (tb *Bot) handleVocabAddReply(c tele.Context, msg *tele.Message) error {

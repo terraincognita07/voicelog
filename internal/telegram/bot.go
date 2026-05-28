@@ -163,6 +163,7 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&discardBtn, tb.cbDiscard)
 	tb.bot.Handle(&savedRestoreBtn, tb.cbSavedRestore)
 	tb.bot.Handle(&savedFullBtn, tb.cbSavedFull)
+	tb.bot.Handle(&editBtn, tb.cbEditPrompt)
 	tb.bot.Handle(&discardPendingBtn, tb.cbDiscardPending)
 	tb.bot.Handle(&discardRecentBtn, tb.cbDiscardRecent)
 	tb.bot.Handle(&restoreRecentBtn, tb.cbRestoreRecent)

@@ -46,7 +46,10 @@ type messages struct {
 	ErrFallback        string
 	DiscardBtn         string
 	RestoreBtn         string
-	ShowFullBtn        string // [📖 Show full] when preview was truncated
+	ShowFullBtn        string                                // [📖 Show full] when preview was truncated
+	EditBtn            string                                // [✏️ Edit] on a saved-note reply
+	EditPrompt         func(id int64) string                 // force-reply prompt; MUST contain the id as its only number
+	EditUpdated        func(id int64, preview string) string // confirmation after the text is replaced
 	DiscardedReply     func(id int64, preview string) string
 	RestoredReply      func(id int64, preview string) string
 	Status             func(s string) string // localize "pending"/"analyzed"/"discarded"
@@ -165,6 +168,7 @@ var locales = map[string]messages{
 			"restore":                "Couldn't restore the note.",
 			"clear":                  "Couldn't clear pending notes.",
 			"mark discarded":         "Couldn't discard the note.",
+			"edit note":              "Couldn't update the note text.",
 			"vocab list":             "Couldn't load the vocabulary.",
 			"vocab add":              "Couldn't add to vocabulary.",
 			"vocab del":              "Couldn't remove from vocabulary.",
@@ -187,6 +191,17 @@ var locales = map[string]messages{
 		DiscardBtn:   "🗑 Discard",
 		RestoreBtn:   "↩ Restore",
 		ShowFullBtn:  "📖 Show full",
+		EditBtn:      "✏️ Edit",
+		EditPrompt: func(id int64) string {
+			return fmt.Sprintf("✏️ Note #%d — reply to this message with the corrected text.", id)
+		},
+		EditUpdated: func(id int64, preview string) string {
+			head := fmt.Sprintf("✏️ Note #%d updated. The previous text is archived.", id)
+			if preview == "" {
+				return head
+			}
+			return head + "\n\n«" + preview + "»"
+		},
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Note #%d discarded.", id)
 			if preview == "" {
@@ -356,6 +371,7 @@ var locales = map[string]messages{
 			"restore":                "Не удалось восстановить заметку.",
 			"clear":                  "Не удалось очистить очередь.",
 			"mark discarded":         "Не удалось отбросить заметку.",
+			"edit note":              "Не удалось обновить текст заметки.",
 			"vocab list":             "Не удалось загрузить словарь.",
 			"vocab add":              "Не удалось добавить в словарь.",
 			"vocab del":              "Не удалось удалить из словаря.",
@@ -378,6 +394,17 @@ var locales = map[string]messages{
 		DiscardBtn:   "🗑 Отбросить",
 		RestoreBtn:   "↩ Вернуть",
 		ShowFullBtn:  "📖 Показать полностью",
+		EditBtn:      "✏️ Исправить",
+		EditPrompt: func(id int64) string {
+			return fmt.Sprintf("✏️ Заметка #%d — ответь на это сообщение исправленным текстом.", id)
+		},
+		EditUpdated: func(id int64, preview string) string {
+			head := fmt.Sprintf("✏️ Заметка #%d обновлена. Прежний текст сохранён в истории.", id)
+			if preview == "" {
+				return head
+			}
+			return head + "\n\n«" + preview + "»"
+		},
 		DiscardedReply: func(id int64, preview string) string {
 			head := fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
 			if preview == "" {

@@ -24,6 +24,7 @@ var (
 	discardBtn      = tele.InlineButton{Unique: "discard"}       // saved-note reply
 	savedRestoreBtn = tele.InlineButton{Unique: "saved_restore"} // undo discard on saved-note reply
 	savedFullBtn    = tele.InlineButton{Unique: "saved_full"}    // expand preview to full text
+	editBtn         = tele.InlineButton{Unique: "edit_note"}     // open the force-reply edit prompt
 )
 
 // savedPreviewLen caps the inline preview shown under a saved-reply.
@@ -46,7 +47,18 @@ func (tb *Bot) savedMarkup(id int64, discarded, truncated bool) *tele.ReplyMarku
 		primary.Text = tb.msg.DiscardBtn
 	}
 	primary.Data = strconv.FormatInt(id, 10)
-	rows := [][]tele.InlineButton{{primary}}
+	// The first row pairs the discard toggle with [✏️ Edit]. Editing is
+	// offered only while the note is live — a discarded note is the user's
+	// "forget this" signal, so we don't invite overwriting it (mirrors the
+	// MCP retranscribe refusal). Restoring first re-enables the edit button.
+	firstRow := []tele.InlineButton{primary}
+	if !discarded {
+		edit := editBtn
+		edit.Text = tb.msg.EditBtn
+		edit.Data = strconv.FormatInt(id, 10)
+		firstRow = append(firstRow, edit)
+	}
+	rows := [][]tele.InlineButton{firstRow}
 	if truncated {
 		full := savedFullBtn
 		full.Text = tb.msg.ShowFullBtn
@@ -158,6 +170,85 @@ func (tb *Bot) cbSavedFull(c tele.Context) error {
 	}
 	tb.tryEdit(c, body, tb.savedMarkup(id, discarded, false))
 	return c.Respond()
+}
+
+// cbEditPrompt handles [✏️ Edit] under a saved-note reply. It opens a
+// force-reply prompt carrying the note id; the user's reply is caught in
+// onText (via matchEditPrompt) and applied through applyNoteEdit. Using a
+// force-reply (rather than asking the user to type a command with the id)
+// keeps editing one tap + one message, the same shape as /vocab Add.
+func (tb *Bot) cbEditPrompt(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	_ = c.Respond()
+	return c.Send(tb.msg.EditPrompt(id), &tele.ReplyMarkup{ForceReply: true, Selective: true})
+}
+
+// matchEditPrompt reports whether promptText is an edit force-reply prompt
+// and, if so, the note id it targets. It recovers the id by reading the
+// first run of digits in the text and confirming that re-rendering
+// EditPrompt(id) reproduces the exact prompt — locale-agnostic, and robust
+// as long as EditPrompt embeds the id as its only number (asserted in
+// TestLocalesAreComplete).
+func (tb *Bot) matchEditPrompt(promptText string) (int64, bool) {
+	id, ok := firstInt(promptText)
+	if !ok {
+		return 0, false
+	}
+	if tb.msg.EditPrompt(id) != promptText {
+		return 0, false
+	}
+	return id, true
+}
+
+// firstInt returns the first maximal run of ASCII digits in s as an int64.
+func firstInt(s string) (int64, bool) {
+	start := -1
+	for i, r := range s {
+		if r >= '0' && r <= '9' {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			n, err := strconv.ParseInt(s[start:i], 10, 64)
+			return n, err == nil
+		}
+	}
+	if start >= 0 {
+		n, err := strconv.ParseInt(s[start:], 10, 64)
+		return n, err == nil
+	}
+	return 0, false
+}
+
+// applyNoteEdit replaces a note's text with newText, archiving the previous
+// text to notes_history (reversible at the SQL level). Empty newText is a
+// no-op (returns ErrNoteNotFound's sibling: nil reply, handled by caller).
+// Returns the inline preview + whether it was truncated so the caller can
+// rebuild the saved-reply markup.
+func (tb *Bot) applyNoteEdit(c tele.Context, id int64, newText string) error {
+	text := strings.TrimSpace(newText)
+	if text == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := tb.db.ArchiveAndUpdateText(ctx, id, text, "", db.NoteMeta{}); err != nil {
+		if errors.Is(err, db.ErrNoteNotFound) {
+			return c.Send(tb.msg.NotFound(id))
+		}
+		return tb.errReply(c, "edit note", err)
+	}
+	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
+	return c.Send(tb.msg.EditUpdated(id, preview), tb.savedMarkup(id, false, truncated))
 }
 
 // notePreviewAndTruncated returns the truncated preview AND whether
