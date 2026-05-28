@@ -1,6 +1,6 @@
 # Running voicelog locally (for development)
 
-Requires Go 1.25+.
+Requires Go 1.26+.
 
 ```bash
 git clone https://github.com/terraincognita07/voicelog.git

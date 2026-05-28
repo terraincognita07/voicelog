@@ -16,7 +16,7 @@ sharpen the existing single-user surface are very welcome.
 
 ## Local setup
 
-Requires Go 1.25+, Docker + Compose v2, and `ffmpeg` if you intend to
+Requires Go 1.26+, Docker + Compose v2, and `ffmpeg` if you intend to
 exercise the voice path end-to-end.
 
 ```bash
