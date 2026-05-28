@@ -40,11 +40,17 @@ jobs:
           CGO_ENABLED: '1'
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # codecov no longer allows tokenless upload by default. Token
+      # lives in repo secret CODECOV_TOKEN (get it from codecov.io
+      # after linking the repo). fail_ci_if_error stays false so a
+      # codecov outage doesn't gate the merge — coverage is a
+      # signal, not a release gate.
       - name: upload coverage
         uses: codecov/codecov-action@v6
         with:
           files: coverage.out
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   vuln:
     name: govulncheck
