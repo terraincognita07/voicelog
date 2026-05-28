@@ -87,6 +87,9 @@ func NewServer(store *db.DB, deps RetranscribeDeps, logger *slog.Logger) *server
 		registerDiscardNotes,
 		registerRestoreNote,
 		registerDBHealth,
+		registerListVocab,
+		registerAddVocab,
+		registerRemoveVocab,
 	} {
 		register(s, store, logger)
 	}

@@ -1,6 +1,6 @@
 # MCP — tools and Claude.ai exposure
 
-The mcp container exposes 9 tools over JSON-RPC at `/mcp`, guarded by
+The mcp container exposes 12 tools over JSON-RPC at `/mcp`, guarded by
 a bearer token (`MCP_TOKEN`). It binds to `127.0.0.1:8081` on the
 host — Internet exposure is your reverse-proxy's job.
 
@@ -61,6 +61,18 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
   the diff. Discarded notes are refused — call `restore_note` first
   if you really want to overwrite them. Requires the mcp container
   to be wired with `WHISPER_URL`.
+- **`list_vocab()`** —
+  list the current whisper vocabulary terms (newest first). Returns
+  `{terms: [...], count: N}`. Use before `add_vocab` to avoid duplicates.
+- **`add_vocab(terms: string[])`** —
+  add terms to the whisper vocabulary so future transcriptions recognize
+  them. Use when you notice whisper repeatedly mis-spelling the same name
+  or jargon across notes. Case preserved; duplicates ignored
+  case-insensitively; terms over 64 chars skipped. Returns
+  `{added, skipped_existing, skipped_too_long}`.
+- **`remove_vocab(term: string)`** —
+  remove a single term (case-insensitive). Returns `{removed: bool}`.
+  Wiping the whole vocabulary is intentionally bot-only (`/vocab clear`).
 
 Tool schemas are visible via standard MCP `tools/list`.
 

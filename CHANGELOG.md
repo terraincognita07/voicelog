@@ -11,6 +11,13 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Added
 
+- Vocabulary management over MCP. Three new tools — `list_vocab`,
+  `add_vocab(terms[])`, `remove_vocab(term)` — let Claude close the
+  transcription-quality loop it's uniquely positioned to see: scanning the
+  whole corpus it can spot whisper consistently mangling a name/term and add
+  it to the vocabulary so future transcriptions improve. Per-term length
+  capped at 64 chars. `clear_vocab` is intentionally NOT exposed (wiping the
+  list stays a human two-step confirm in the bot). MCP tool count: 9 → 12.
 - Edit a note's text from Telegram. Live saved-note replies now carry an
   `[✏️ Edit]` button next to `[🗑 Discard]`: tap it, reply to the force-reply
   prompt with the corrected text, and the note's `raw_text` is replaced. The

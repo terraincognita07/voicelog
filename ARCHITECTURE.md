@@ -97,20 +97,23 @@ encoding fits.
 ## MCP surface
 
 Server: `internal/mcp/server.go` (constructor + helpers); tools live
-in `tools_read.go` / `tools_mutate.go` / `tools_retranscribe.go`.
-Nine tools as of 2026-05-28:
+in `tools_read.go` / `tools_mutate.go` / `tools_retranscribe.go` /
+`tools_vocab.go`. Twelve tools:
 
 | Tool | Mutating? | Notes |
 |---|---|---|
 | `list_pending_notes` | no | basic CRUD |
 | `get_notes_in_range` | no | + `include_discarded` opt-in |
-| `search_notes` | no | FTS5 + bm25 + 30-token snippet |
+| `search_notes` | no | FTS5 + bm25 + 30-token snippet; Cyrillic terms stemmed (Snowball ru) + prefix-matched |
 | `get_note` | no | full raw_text |
 | `mark_analyzed` | yes | batch |
 | `discard_notes` | yes | batch, reversible |
 | `restore_note` | yes | only `discarded → pending` |
 | `retranscribe` | yes | requires audio retention; archives to `notes_history` |
 | `db_health` | no | `PRAGMA integrity_check` (+ optional `quick` mode) + counts |
+| `list_vocab` | no | current whisper vocabulary terms |
+| `add_vocab` | yes | batch add; Claude closes the transcription-quality loop |
+| `remove_vocab` | yes | single term; `clear` stays bot-only by design |
 
 Every tool sets `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
 `OpenWorldHint` explicitly.
