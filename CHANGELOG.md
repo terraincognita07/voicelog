@@ -12,11 +12,33 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 ### Added
 
 - **Startup audio housekeeping** (bot only): after `Migrate`, the bot
-  runs `audio.RelativizeLegacyPaths` (one-shot normalization of
-  pre-F3 absolute `audio_path` rows that point under the current
-  `AUDIO_DIR`) and `audio.ScanOrphans` (Warn-level log for `*.oga`
-  files in `AUDIO_DIR` with no matching DB row). Both are read-mostly,
-  idempotent, and skipped when retention is disabled.
+  runs `audio.CheckDirPerm` (Warn when `AUDIO_DIR` exists with mode
+  wider than `0700` — read-only, never chmods),
+  `audio.RelativizeLegacyPaths` (one-shot normalization of pre-F3
+  absolute `audio_path` rows that point under the current `AUDIO_DIR`),
+  and `audio.ScanOrphans` (Warn-level log for `*.oga` files in
+  `AUDIO_DIR` with no matching DB row). All three are read-mostly,
+  idempotent, and skipped when retention is disabled. `CheckDirPerm`
+  is gated by `runtime.GOOS != "windows"` (Windows reports synthetic
+  perm bits).
+- **Whisper warn-once for missing segments.** `whisper.Client` gains
+  an optional `Logger` field (wired by `cmd/bot` and `cmd/mcp`). When
+  a response decodes with no `segments[]`, the client emits a single
+  `sync.Once`-guarded Warn per process lifetime — operators see that
+  confidence detection is disabled (typical cause: whisper.cpp not
+  returning `verbose_json`) without log spam. Tests:
+  `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
+  `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
+- **Open-source readiness batch:** `Makefile` with `make test /
+  test-race / build / vet / lint / vuln / fmt / tidy / ci / clean`
+  mirroring CI; `.editorconfig` for tab/space consistency;
+  `docs/ROADMAP.md` (next / mid-term / speculative / won't-do
+  buckets); `docs/RELEASING.md` (pre-release checklist, tag-cutting
+  steps, and how to reconcile the CHANGELOG-vs-git mismatch from the
+  v0.1.0 → v0.2.0 window); a Documentation section in README that
+  wires ARCHITECTURE / CONTRIBUTING / CHANGELOG / SECURITY /
+  CODE_OF_CONDUCT / ROADMAP into the front page; codecov badge
+  (codecov upload was already in CI, just the badge was missing).
 
 ### Changed
 
@@ -32,75 +54,17 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   `config.ParseFloat01` keeps the existing per-binary defaults intact
   (bot still passes `0.0` as the "let telegram.New pick" signal, mcp
   still uses `0.6` directly).
-
-### Tests
-
-- **`whisper.transcribeWAV` HTTP coverage** via `httptest.NewServer`:
-  verbose_json happy path, plain-json fallback (no segments), prompt
-  presence/absence in multipart, HTTP error propagation, malformed
-  JSON body, missing wav file. Outer `Transcribe` (with its ffmpeg
-  pre-step) still depends on a real ffmpeg binary at test time.
-- **`internal/mcp` integration tests** — 15 tests against a live
-  `httptest.NewServer(mcp.BearerAuth(token, mcpHTTP))`. Cover bearer
-  auth (missing / wrong / correct + WWW-Authenticate echo) plus a
-  happy path for every tool: list_pending_notes, get_notes_in_range,
-  search_notes, get_note (found + not_found), mark_analyzed,
-  discard_notes, restore_note (discarded→pending + analyzed-not-
-  restorable), retranscribe (unavailable when Whisper is nil),
-  db_health. As prep, `bearerAuth` moved from `cmd/mcp/main.go` to
-  `internal/mcp/auth.go` (exported as `BearerAuth`) so the test
-  exercises the same wrapper that ships in production.
-- **Goroutine lifecycle tests** for `audio.Janitor` and
-  `db.MaintenanceLoop`. Janitor immediate-return when retention is
-  disabled (retentionDays ≤ 0 or dir==""); both goroutines exit
-  within 2s of ctx cancel even though their tickers are configured
-  for hours/days (cancel must unblock the select on `ctx.Done()`
-  directly).
-- **Migration bootstrap test** — `TestMigrateBootstrap` in
-  `internal/db/db_test.go` verifies that after a fresh `Migrate`
-  call the DB has every table, column, FTS5 trigger, and index that
-  the codebase relies on, and that `schema_migrations` matches the
-  list of `*.sql` files exactly. Catches "added a column in code,
-  forgot the migration" regressions before the first INSERT.
-- **`internal/diskguard` tests** — common test asserts
-  `FreeBytes(t.TempDir())` returns `(non-zero, nil)` on every
-  platform. Build-tagged tests cover the platform-specific surfaces:
-  on Unix the value must be a real Statfs reading (`< MaxUint64`)
-  and `FreeBytes("/no/such/path")` must surface the syscall error;
-  on non-Unix `FreeBytes` must return the `MaxUint64` sentinel for
-  any input. Removes the last `[no test files]` from
-  `go test ./...`.
-
-### Added
-
-- **Whisper warn-once for missing segments.** `whisper.Client` gains
-  an optional `Logger` field (wired by `cmd/bot` and `cmd/mcp`). When
-  a response decodes with no `segments[]`, the client emits a single
-  `sync.Once`-guarded Warn per process lifetime — operators see that
-  confidence detection is disabled (typical cause: whisper.cpp not
-  returning `verbose_json`) without log spam. Tests:
-  `TestTranscribeWAV_WarnsOnceOnMissingSegments`,
-  `TestTranscribeWAV_DoesNotWarnOnSegmentsPresent`.
-- **Open-source readiness batch:** `Makefile` with `make test /
-  test-race / build / vet / lint / vuln / fmt / tidy / ci / clean`
-  mirroring CI; `.editorconfig` for tab/space consistency;
-  `docs/ROADMAP.md` (next / mid-term / speculative / won't-do
-  buckets); a Documentation section in README that wires
-  ARCHITECTURE / CONTRIBUTING / CHANGELOG / SECURITY /
-  CODE_OF_CONDUCT / ROADMAP into the front page; codecov badge
-  (codecov upload was already in CI, just the badge was missing).
-
-### Changed
-
-- **Audio dir perm check at startup.** `audio.CheckDirPerm(audioDir, logger)`
-  logs Warn if `AUDIO_DIR` exists with mode wider than `0700`. The
-  read-only check addresses the gap where `MkdirAll(0o700)` only
-  affects freshly-created directories — an operator-restored or
-  pre-created `AUDIO_DIR` with relaxed permissions would silently
-  leave retained audio under a non-owner-only parent. The check is
-  Warn-only — never chmods behind the operator's back. Gated by
-  `runtime.GOOS != "windows"` (Windows reports synthetic perm bits).
-  Wired into bot startup next to the other retention housekeeping.
+- **`retranscribe` refuses discarded notes.** Previously the MCP tool
+  would silently overwrite a discarded note's text. Now it returns an
+  error hinting the caller to `restore_note` first. Mirrors the
+  "discarded = forget this" signal the bot's UI already respects.
+  Covered by `TestRetranscribe_RefusesDiscarded`.
+- **Telegram `c.Edit` failures are no longer swallowed.** The
+  previous `_ = c.Edit(...)` callsites now route through
+  `tb.tryEdit(...)`, which logs Warn on any error that's not
+  Telegram's benign `"message is not modified"`. Same UX on the
+  happy path; real failures (network drop, message-too-old, invalid
+  markup) now appear in the slog stream.
 - **`/vocab` clear-cancel asymmetry documented** in
   `internal/telegram/vocab.go`. No code change — the empty `Data`
   payload on Yes/No is intentional (vocab has no stateful view to
@@ -111,8 +75,9 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   runner (`db.Migrate`) lives in `internal/db`; the SQL files it
   embeds now sit next to it, following Go's "package owns its
   resources" convention. Embed pattern stayed `*.sql` (relative).
-  Seven importers swapped `voicelog/migrations` → `voicelog/internal/db/migrations`.
-  Top-level root no longer has a `migrations/` directory.
+  Seven importers swapped `voicelog/migrations` →
+  `voicelog/internal/db/migrations`. Top-level root no longer has a
+  `migrations/` directory.
 - **`internal/mcp/server.go` split by tool family.** 542 → 128 lines
   in `server.go` (NewServer + shared helpers — `toMCP`, `jsonResult`,
   `toInt64Slice`, plus the `mcpNote` wire type). New same-package
@@ -151,23 +116,10 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
     debugging the common-startup-failures list.
   - `docs/RUN-LOCALLY.md` — dev loop, project layout, Makefile
     targets, running without Docker.
-  - `docs/ROADMAP.md` was added in the previous commit.
+  - `docs/ROADMAP.md` + `docs/RELEASING.md` cover roadmap and
+    release process.
   External links to old README anchors will break — acceptable for
   a v0.1.x repo with no known external linkers.
-
-### Changed
-
-- **`retranscribe` refuses discarded notes.** Previously the MCP tool
-  would silently overwrite a discarded note's text. Now it returns an
-  error hinting the caller to `restore_note` first. Mirrors the
-  "discarded = forget this" signal the bot's UI already respects.
-  Covered by `TestRetranscribe_RefusesDiscarded`.
-- **Telegram `c.Edit` failures are no longer swallowed.** The
-  previous `_ = c.Edit(...)` callsites now route through
-  `tb.tryEdit(...)`, which logs Warn on any error that's not
-  Telegram's benign `"message is not modified"`. Same UX on the
-  happy path; real failures (network drop, message-too-old, invalid
-  markup) now appear in the slog stream.
 
 ### Fixed
 
@@ -191,6 +143,44 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   `busy_timeout` was effective; first deploy of bot+mcp under
   docker-compose could restart-loop. Distinct from F1/F2 (which were
   about `Migrate`); same user-visible symptom.
+
+### Tests
+
+- **`whisper.transcribeWAV` HTTP coverage** via `httptest.NewServer`:
+  verbose_json happy path, plain-json fallback (no segments), prompt
+  presence/absence in multipart, HTTP error propagation, malformed
+  JSON body, missing wav file. Outer `Transcribe` (with its ffmpeg
+  pre-step) still depends on a real ffmpeg binary at test time.
+- **`internal/mcp` integration tests** — 15 tests against a live
+  `httptest.NewServer(mcp.BearerAuth(token, mcpHTTP))`. Cover bearer
+  auth (missing / wrong / correct + WWW-Authenticate echo) plus a
+  happy path for every tool: list_pending_notes, get_notes_in_range,
+  search_notes, get_note (found + not_found), mark_analyzed,
+  discard_notes, restore_note (discarded→pending + analyzed-not-
+  restorable), retranscribe (unavailable when Whisper is nil),
+  db_health. As prep, `bearerAuth` moved from `cmd/mcp/main.go` to
+  `internal/mcp/auth.go` (exported as `BearerAuth`) so the test
+  exercises the same wrapper that ships in production.
+- **Goroutine lifecycle tests** for `audio.Janitor` and
+  `db.MaintenanceLoop`. Janitor immediate-return when retention is
+  disabled (retentionDays ≤ 0 or dir==""); both goroutines exit
+  within 2s of ctx cancel even though their tickers are configured
+  for hours/days (cancel must unblock the select on `ctx.Done()`
+  directly).
+- **Migration bootstrap test** — `TestMigrateBootstrap` in
+  `internal/db/db_test.go` verifies that after a fresh `Migrate`
+  call the DB has every table, column, FTS5 trigger, and index that
+  the codebase relies on, and that `schema_migrations` matches the
+  list of `*.sql` files exactly. Catches "added a column in code,
+  forgot the migration" regressions before the first INSERT.
+- **`internal/diskguard` tests** — common test asserts
+  `FreeBytes(t.TempDir())` returns `(non-zero, nil)` on every
+  platform. Build-tagged tests cover the platform-specific surfaces:
+  on Unix the value must be a real Statfs reading (`< MaxUint64`)
+  and `FreeBytes("/no/such/path")` must surface the syscall error;
+  on non-Unix `FreeBytes` must return the `MaxUint64` sentinel for
+  any input. Removes the last `[no test files]` from
+  `go test ./...`.
 
 ## [0.3.0] — 2026-05-28
 
