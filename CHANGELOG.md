@@ -143,6 +143,16 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ### Fixed
 
+- **`MarkAnalyzed` non-idempotent under callback flood.** The WHERE
+  clause was `status != 'discarded'`, which matched
+  `analyzed → analyzed` no-op UPDATEs through modernc/sqlite's
+  count-matched semantics. A 50× tap-storm on the same note
+  reported 50 flips instead of 1 and re-wrote the same row 50
+  times. Narrowed to `WHERE status = 'pending'` — semantically
+  clearer ("only flip pending → analyzed") and properly idempotent.
+  Caught by the new `TestMarkAnalyzed_CallbackFlood` test that ran
+  50 concurrent calls and asserted total flips == 1; the same
+  test now also guards `DiscardNotes` (which was already correct).
 - **F1 + F2 (MED → resolved):** `db.Migrate` now wraps the full apply
   loop in `BEGIN IMMEDIATE` on a dedicated `*sql.Conn`. Concurrent
   runners (bot + mcp on a fresh DB) serialize on SQLite's RESERVED

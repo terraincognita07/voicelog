@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -687,5 +688,134 @@ func TestMarkDiscarded(t *testing.T) {
 	recent, _ := d.ListRecent(ctx, 10)
 	if len(recent) != 1 || recent[0].Status != db.StatusDiscarded {
 		t.Fatalf("recent should show discarded row, got %+v", recent)
+	}
+}
+
+// TestDiscardNotes_CallbackFlood models the "user taps the same
+// [🗑] button 50 times rapid-fire on a phone" scenario. The bot's
+// callback handler dispatches one DiscardNotes call per tap;
+// nothing serializes them. The behavior contract we promise:
+//
+//  1. No panic / no SQLITE error under the storm.
+//  2. The row ends up `discarded` exactly once — not "discarded
+//     twice" or in an inconsistent intermediate state.
+//  3. Across N concurrent calls, the sum of `updated` returned by
+//     DiscardNotes is exactly 1. The first winning UPDATE flips
+//     status; every subsequent one matches "status != 'discarded'"
+//     filter against the already-flipped row and reports
+//     updated=0. That guarantees idempotency at the SQL level —
+//     even if the bot retries a callback because the user
+//     double-tapped through bad latency.
+//
+// MarkAnalyzed has the same contract; covered by a sibling test.
+func TestDiscardNotes_CallbackFlood(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	id, err := d.InsertNote(ctx, "to be hammered", 5)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	const N = 50
+	var (
+		wg          sync.WaitGroup
+		mu          sync.Mutex
+		totalFlips  int
+		firstErr    error
+		startSignal = make(chan struct{})
+	)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-startSignal // line every goroutine up before they fire
+			n, err := d.DiscardNotes(ctx, []int64{id})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			totalFlips += n
+		}()
+	}
+	close(startSignal)
+	wg.Wait()
+
+	if firstErr != nil {
+		t.Errorf("DiscardNotes errored under flood: %v", firstErr)
+	}
+	if totalFlips != 1 {
+		t.Errorf("idempotency: want exactly 1 flip across %d calls, got %d", N, totalFlips)
+	}
+	got, err := d.GetNote(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != db.StatusDiscarded {
+		t.Errorf("final status: want discarded, got %q", got.Status)
+	}
+}
+
+// TestMarkAnalyzed_CallbackFlood mirrors the discard-flood test for
+// the analyzed transition. Same idempotency contract: among N
+// concurrent MarkAnalyzed calls on the same id, exactly one
+// UPDATE actually flips the row; the rest report updated=0
+// because the narrow filter `status = 'pending'` no longer matches
+// after the winner commits.
+//
+// Until 2026-05-28 MarkAnalyzed used `WHERE status != 'discarded'`,
+// which counted every `analyzed → analyzed` no-op UPDATE as
+// affected through modernc/sqlite's match-counting semantics, so a
+// 50× flood would report 50 flips. This test caught that and the
+// SQL was narrowed.
+func TestMarkAnalyzed_CallbackFlood(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+	id, err := d.InsertNote(ctx, "to be analyzed under flood", 5)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	const N = 50
+	var (
+		wg          sync.WaitGroup
+		mu          sync.Mutex
+		totalFlips  int
+		firstErr    error
+		startSignal = make(chan struct{})
+	)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-startSignal
+			n, err := d.MarkAnalyzed(ctx, []int64{id})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			totalFlips += n
+		}()
+	}
+	close(startSignal)
+	wg.Wait()
+
+	if firstErr != nil {
+		t.Errorf("MarkAnalyzed errored under flood: %v", firstErr)
+	}
+	// Narrow `status = 'pending'` filter: first call flips pending →
+	// analyzed (returns 1), every subsequent call sees status =
+	// analyzed and matches nothing (returns 0). Sum across the
+	// flood is exactly 1.
+	if totalFlips != 1 {
+		t.Errorf("idempotency: want exactly 1 flip across %d calls, got %d", N, totalFlips)
+	}
+	got, err := d.GetNote(ctx, id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != db.StatusAnalyzed {
+		t.Errorf("final status: want analyzed, got %q", got.Status)
 	}
 }

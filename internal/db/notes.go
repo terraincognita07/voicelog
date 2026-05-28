@@ -275,8 +275,15 @@ func (db *DB) RestoreNote(ctx context.Context, id int64) (bool, error) {
 	return false, nil
 }
 
-// MarkAnalyzed flips status from anything-but-discarded to 'analyzed' for the
-// given ids. Returns the number of rows actually updated.
+// MarkAnalyzed flips `pending → analyzed` for the given ids. Already-
+// analyzed and discarded rows are left alone and not counted. Returns
+// the number of rows actually flipped.
+//
+// The narrow `status = 'pending'` filter (rather than the looser
+// `status != 'discarded'`) is what makes this call idempotent under
+// callback-storm conditions: a 50× flood of identical taps reports
+// 1 + 0 + 0 + ... instead of 1 + 1 + 1 + ... because subsequent calls
+// no longer match the WHERE clause. See TestMarkAnalyzed_CallbackFlood.
 func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -285,7 +292,7 @@ func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	// from len(ids), values go through ExecContext args parameterized.
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status != 'discarded' AND id IN (%s)`, placeholders) // nosemgrep
+	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status = 'pending' AND id IN (%s)`, placeholders) // nosemgrep
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
