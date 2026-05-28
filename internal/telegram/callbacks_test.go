@@ -8,7 +8,7 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 // --- saved-reply callbacks (saved_reply.go) ------------------------------

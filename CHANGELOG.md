@@ -9,6 +9,22 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-28
+
+### Fixed
+
+- **Module path is now the canonical `github.com/terraincognita07/voicelog`**
+  (was a bare `module voicelog`). The bare path is not fetchable through
+  the Go module proxy, which broke two things the repo already advertised:
+  the Go Report Card badge (`proxy.golang.org/voicelog/@latest` → 404) and
+  any `go install github.com/terraincognita07/voicelog/cmd/{bot,mcp}@latest`.
+  All 22 internal import sites were rewritten from `voicelog/internal/...`
+  to the full path. Purely mechanical — no runtime behavior change, no
+  go.sum change, Docker builds unaffected (they compile from source). Not
+  a breaking change in practice: the old bare path was never importable by
+  anyone outside the module. Requires this tagged release for the proxy
+  `@latest` to resolve with the corrected path.
+
 ## [0.2.0] — 2026-05-28
 
 Sweep release covering everything that landed between `v0.1.0` and

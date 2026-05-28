@@ -19,7 +19,7 @@ import (
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 const (

@@ -10,7 +10,7 @@ import (
 	mcpsdk "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 // Mutating MCP tools — they write to the DB but do not call out to

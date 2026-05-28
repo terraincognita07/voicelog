@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 // TestMaintenanceLoop_ExitsOnContextCancel asserts the maintenance

@@ -7,7 +7,7 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 // fakeCtx implements tele.Context for unit tests. Only Send / Edit / Notify

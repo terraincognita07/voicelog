@@ -1,4 +1,4 @@
-module voicelog
+module github.com/terraincognita07/voicelog
 
 go 1.26.1
 

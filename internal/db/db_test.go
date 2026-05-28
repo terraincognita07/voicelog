@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
 )
 
 func openTestDB(t *testing.T) *db.DB {

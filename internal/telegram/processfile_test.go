@@ -13,8 +13,8 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/db"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 // makeAudio writes deterministic bytes to a tmp file under t.TempDir() and

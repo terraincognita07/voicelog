@@ -25,7 +25,7 @@ import (
 	"strconv"
 	"time"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 // JanitorPeriod is the cleanup tick. Six hours is a sane compromise:

@@ -17,11 +17,11 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/audio"
-	"voicelog/internal/db"
-	"voicelog/internal/diskguard"
-	"voicelog/internal/promptbuilder"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/audio"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/diskguard"
+	"github.com/terraincognita07/voicelog/internal/promptbuilder"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 // dedupWindow is how recent a note must be (by created_at) to be

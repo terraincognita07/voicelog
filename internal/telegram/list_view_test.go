@@ -11,8 +11,8 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
 )
 
 // newTestBot wires the minimum bits of a *Bot for rendering tests:

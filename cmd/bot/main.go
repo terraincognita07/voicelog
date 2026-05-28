@@ -9,13 +9,13 @@ import (
 	"strconv"
 	"syscall"
 
-	"voicelog/internal/audio"
-	"voicelog/internal/config"
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
-	"voicelog/internal/diag"
-	"voicelog/internal/telegram"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/audio"
+	"github.com/terraincognita07/voicelog/internal/config"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/diag"
+	"github.com/terraincognita07/voicelog/internal/telegram"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 func main() {

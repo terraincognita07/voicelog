@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
 )
 
 // Fuzz targets for the DB-side functions that take user-provided

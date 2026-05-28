@@ -15,10 +15,10 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
-	"voicelog/internal/mcp"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/mcp"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 const testToken = "abcdefghijklmnopqrst"

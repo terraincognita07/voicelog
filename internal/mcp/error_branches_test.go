@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"voicelog/internal/mcp"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/mcp"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 // Error-branch coverage for the MCP tools.

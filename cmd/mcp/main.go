@@ -12,12 +12,12 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
-	"voicelog/internal/config"
-	"voicelog/internal/db"
-	"voicelog/internal/db/migrations"
-	"voicelog/internal/diag"
-	"voicelog/internal/mcp"
-	"voicelog/internal/whisper"
+	"github.com/terraincognita07/voicelog/internal/config"
+	"github.com/terraincognita07/voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db/migrations"
+	"github.com/terraincognita07/voicelog/internal/diag"
+	"github.com/terraincognita07/voicelog/internal/mcp"
+	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 const minTokenLen = 16

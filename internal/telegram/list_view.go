@@ -10,7 +10,7 @@ import (
 
 	tele "gopkg.in/telebot.v3"
 
-	"voicelog/internal/db"
+	"github.com/terraincognita07/voicelog/internal/db"
 )
 
 // /pending and /recent — day-grouped, paginated, filterable inline-keyboard
