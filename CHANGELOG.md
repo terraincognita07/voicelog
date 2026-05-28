@@ -129,6 +129,21 @@ but it ships as one release.
   `.github/PULL_REQUEST_TEMPLATE.md`, `CODE_OF_CONDUCT.md`.
 - **`schema_migrations` tracker** in `db.Migrate` —
   non-idempotent migrations (`ALTER ADD COLUMN`) run exactly once.
+- **Opt-in pprof endpoint** (`internal/diag`). `PPROF_ADDR` env var,
+  empty = disabled (production default). When set, both `cmd/bot` and
+  `cmd/mcp` expose `net/http/pprof` on a dedicated `ServeMux`. The
+  startup check refuses any non-loopback bind (only `127.0.0.0/8`,
+  `[::1]`, `localhost` pass) — pprof leaks goroutine stacks and source
+  lines, so the safe default is SSH-tunnel-to-loopback. Documented in
+  `docs/CONFIG.md`.
+- **MCP smoke harness** (`scripts/smoke-mcp.sh`). bash + curl + jq
+  walk-through that asserts bearer-auth rejection (missing / wrong
+  token → 401), `tools/list` completeness, and a happy-path response
+  shape for every read-only tool against a *running* server — the
+  integration gap the httptest-based unit tests can't cover (port
+  binding, auth wrapper, env plumbing). Wired into `docs/RELEASING.md`
+  as a pre-release manual gate. Mutating tools are opt-in via
+  `--mutate` + `NOTE_ID`.
 
 ### Changed
 
