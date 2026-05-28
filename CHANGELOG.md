@@ -16,6 +16,13 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   to clients in the initialize handshake); bumped to `0.2.1`. Added a
   release-checklist step in `docs/RELEASING.md` so it's bumped with each
   tag instead of silently lagging.
+- `scripts/smoke-mcp.sh` per-tool checks now actually run. They were
+  invoked through `bash -c` subshells, which don't inherit the script's
+  shell functions or non-exported vars — so 5 of 8 checks died with
+  `call_tool: command not found` before sending any request. Fixed by
+  exporting the helper functions + `MCP_URL`/`MCP_TOKEN`. The auth and
+  tools/list checks were unaffected (plain in-process functions). Caught
+  on the first real run against a live server.
 
 ## [0.2.1] — 2026-05-28
 

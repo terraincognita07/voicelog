@@ -110,6 +110,15 @@ expect_content_has() {
   fi
 }
 
+# The `run` wrapper below invokes the per-tool tests as `bash -c '...'`,
+# which spawns a fresh bash. A fresh bash does NOT inherit shell
+# functions or non-exported variables, so without these exports those
+# subshells die with `call_tool: command not found`. (The auth/tools-list
+# tests are plain functions called in-process and don't need this, but
+# the per-tool read/mutate tests do.)
+export MCP_URL MCP_TOKEN
+export -f call_tool expect_isError expect_content_has
+
 PASS=0
 FAIL=0
 
