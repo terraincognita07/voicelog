@@ -37,6 +37,10 @@ var (
 // renderer below — a rare edge for typical voice notes).
 const savedPreviewLen = 200
 
+// fullPreviewLen is the expanded cap (📖 Show full and the note card): the whole
+// note, kept just under Telegram's 4096-byte single-message limit.
+const fullPreviewLen = 3500
+
 // savedMarkup is the inline keyboard for a saved-note reply: the
 // [🗑 Delete] [✏️ Edit] row, plus a [📖 Show full] row when the inline
 // preview was clipped.

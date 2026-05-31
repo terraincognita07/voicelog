@@ -66,6 +66,15 @@ func TestCbCardTagAdd_PromptAndApply(t *testing.T) {
 	if tags, _ := tb.db.TagsForNote(ctx, id); len(tags) != 2 {
 		t.Errorf("want 2 tags (dup ignored), got %v", tags)
 	}
+	// The reply returns to the tags sub-view, not a dangling "Added N" line.
+	sent2, ok := fc2.lastSent()
+	if !ok {
+		t.Fatal("tag add should reply")
+	}
+	mk := markupOf(t, sent2.Opts)
+	if !markupHasButton(mk, tb.msg.VocabAddBtn) || !markupHasButton(mk, tb.msg.CardBackBtn) {
+		t.Error("tag add should re-render the tags menu (➕ Add / ⬅ Back)")
+	}
 }
 
 // TestCbCardTagRemove removes a tag by its position in the (stable) list.

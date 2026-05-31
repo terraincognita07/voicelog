@@ -9,6 +9,29 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-01
+
+### Added
+
+- **`📖 Show full` in the edit menu.** Opening `✏️ Edit` on a long note used to
+  clip the preview to ~200 characters with no way to see the rest while
+  editing. The menu now offers `📖 Show full`, which expands the note to its
+  full text in place (same cap as the note card) and drops the button — so you
+  can read the whole message before tapping `🔤 Replace a word` / `📝 Rewrite
+  all`. Short notes that already fit are unchanged.
+
+### Changed
+
+- **MCP `serverVersion` bumped `0.7.0` → `0.8.0`** to track the release tag
+  (RELEASING.md step 8). No MCP behavior change this release.
+
+### Fixed
+
+- **Adding a tag returns you to the tags menu.** Replying to the `➕ Add` tag
+  prompt used to leave a bare `🏷 Added N tag(s).` line with no way back; the
+  reply now re-renders the note's tags sub-view (updated tag list + `➕ Add` /
+  `⬅ Back`), matching the `/vocab` add flow.
+
 ## [0.7.0] — 2026-05-31
 
 ### Added

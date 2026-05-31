@@ -131,7 +131,7 @@ func (tb *Bot) renderCard(ctx context.Context, ref cardRef) (string, *tele.Reply
 		tb.logger.Warn("card: load tags", "err", terr)
 	}
 	when := tb.msg.DayLabel(n.CreatedAt) + " · " + n.CreatedAt.Format("15:04")
-	body := tb.msg.CardBody(n.ID, when, previewText(n.RawText, 3500), tags)
+	body := tb.msg.CardBody(n.ID, when, previewText(n.RawText, fullPreviewLen), tags)
 
 	data := ref.encode()
 	edit := editBtn
@@ -344,6 +344,9 @@ func (tb *Bot) cbCardTagAdd(c tele.Context) error {
 	// edit so its in-memory editState can't later swallow this reply (or a
 	// subsequent message) as an edit answer. Same rule as a fresh ✏️.
 	tb.clearEditState()
+	// Remember the originating card so the reply can return to the exact tags
+	// sub-view — the force-reply prompt only carries the note id.
+	tb.setPendingTagRef(ref)
 	_ = c.Respond()
 	return c.Send(tb.msg.TagAddPrompt(ref.id), &tele.ReplyMarkup{ForceReply: true, Selective: true})
 }
@@ -374,8 +377,30 @@ func (tb *Bot) tagAddReplyNoteID(msg *tele.Message) (int64, bool) {
 	return tb.matchTagAddPrompt(strings.TrimSpace(msg.ReplyTo.Text))
 }
 
-// handleTagAddReply parses the reply as space-separated tags and attaches
-// them to the note.
+func (tb *Bot) setPendingTagRef(ref cardRef) {
+	tb.tagMu.Lock()
+	r := ref
+	tb.pendingTagRef = &r
+	tb.tagMu.Unlock()
+}
+
+// takePendingTagRef returns and clears the stored tag-add origin, but only when
+// it matches id — a stale ref from a different note is dropped. ok=false tells
+// the caller to fall back to a pending-list default.
+func (tb *Bot) takePendingTagRef(id int64) (cardRef, bool) {
+	tb.tagMu.Lock()
+	defer tb.tagMu.Unlock()
+	r := tb.pendingTagRef
+	tb.pendingTagRef = nil
+	if r == nil || r.id != id {
+		return cardRef{}, false
+	}
+	return *r, true
+}
+
+// handleTagAddReply parses the reply as space-separated tags, attaches them,
+// and re-renders the note's tags sub-view so the new tag is visible and the
+// user stays in the menu (instead of a dangling "Added N" line).
 func (tb *Bot) handleTagAddReply(c tele.Context, id int64, text string) error {
 	tags := strings.Fields(text)
 	if len(tags) == 0 {
@@ -390,5 +415,17 @@ func (tb *Bot) handleTagAddReply(c tele.Context, id int64, text string) error {
 		}
 		return tb.errReply(c, "tag add", err)
 	}
-	return c.Send(tb.msg.TagsAdded(added))
+	// Back to the tags sub-view (updated list + ➕ Add / ⬅ Back), mirroring the
+	// /vocab add flow. The force-reply only round-trips the id; the originating
+	// list comes from the stored ref, or defaults to /pending when it's gone.
+	ref, ok := tb.takePendingTagRef(id)
+	if !ok {
+		ref = cardRef{id: id, kind: "p"}
+	}
+	confirmation := tb.msg.TagsAdded(added)
+	body, kb, rerr := tb.renderCardTags(ctx, ref)
+	if rerr != nil {
+		return c.Send(confirmation)
+	}
+	return c.Send(confirmation+"\n\n"+body, kb)
 }

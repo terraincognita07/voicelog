@@ -69,6 +69,13 @@ type Bot struct {
 	// simply replaces it. nil means no edit is in progress. Guarded by editMu.
 	editState *pendingEdit
 	editMu    sync.Mutex
+
+	// pendingTagRef remembers which card a tag-add force-reply came from, so the
+	// reply can re-render the exact tags sub-view (the prompt only round-trips
+	// the note id). Render-only — unlike editState it never consumes typed
+	// input, so a stale value can't hijack a message; it's id-guarded on read.
+	pendingTagRef *cardRef
+	tagMu         sync.Mutex
 }
 
 // rejectLogWindow is the per-user cool-down between rejection warnings.
@@ -175,6 +182,7 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&editFullBtn, tb.cbEditFull)
 	tb.bot.Handle(&editCancelBtn, tb.cbEditCancel)
 	tb.bot.Handle(&editPickBtn, tb.cbEditPick)
+	tb.bot.Handle(&editExpandBtn, tb.cbEditExpand)
 	tb.bot.Handle(&openCardBtn, tb.cbOpenCard)
 	tb.bot.Handle(&cardTagsBtn, tb.cbCardTags)
 	tb.bot.Handle(&cardTagsBackBtn, tb.cbCardTagsBack)

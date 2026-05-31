@@ -42,7 +42,9 @@ the `locales` map in `internal/telegram/locale.go`.
   remember — fixes one whisper-misheard word without retyping the note). If that
   word appears more than once, a numbered picker (each match shown with context)
   lets you replace just one occurrence or `Replace all`. `[📝 Rewrite all]`
-  takes the whole new text, `[✗ Cancel]` restores the note.
+  takes the whole new text, `[✗ Cancel]` restores the note. For a long note the
+  menu shows a clipped preview with `[📖 Show full]` to expand it to the whole
+  text in place — so you can see what you're changing before you change it.
   The note message is updated in place and the previous text is archived to
   `notes_history` (reversible at the SQL level). Back out at any point and
   nothing is changed or left hanging.

@@ -412,6 +412,72 @@ func TestCbCardDeleteAsk_ClearsHalfFinishedEdit(t *testing.T) {
 	}
 }
 
+func TestRenderEditMenu_ShowFullExpands(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	long := strings.Repeat("слово ", 60) // 360 runes > savedPreviewLen
+	id, _ := tb.db.InsertNote(ctx, long, 0)
+
+	// Compact: clipped preview + a 📖 Show full button.
+	body, kb, err := tb.renderEditMenu(ctx, id, "", "", "", false)
+	if err != nil {
+		t.Fatalf("renderEditMenu compact: %v", err)
+	}
+	if !strings.Contains(body, "…") {
+		t.Error("compact menu should clip a long note with an ellipsis")
+	}
+	if !markupHasButton(kb, tb.msg.ShowFullBtn) {
+		t.Error("compact menu of a long note should offer 📖 Show full")
+	}
+
+	// Expanded: full text, no Show-full button, edit actions intact.
+	body, kb, err = tb.renderEditMenu(ctx, id, "", "", "", true)
+	if err != nil {
+		t.Fatalf("renderEditMenu expanded: %v", err)
+	}
+	if strings.Contains(body, "…") {
+		t.Error("expanded menu should show the full text without an ellipsis")
+	}
+	if markupHasButton(kb, tb.msg.ShowFullBtn) {
+		t.Error("expanded menu should drop the Show-full button")
+	}
+	if !markupHasButton(kb, tb.msg.EditReplaceBtn) || !markupHasButton(kb, tb.msg.EditFullBtn) {
+		t.Error("expanded menu should still offer the edit actions")
+	}
+}
+
+func TestRenderEditMenu_ShortNoteHasNoExpand(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "коротко", 0)
+
+	_, kb, err := tb.renderEditMenu(ctx, id, "", "", "", false)
+	if err != nil {
+		t.Fatalf("renderEditMenu: %v", err)
+	}
+	if markupHasButton(kb, tb.msg.ShowFullBtn) {
+		t.Error("a short note that already fits should not offer Show full")
+	}
+}
+
+func TestCbEditExpand_ShowsFullInPlace(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, strings.Repeat("слово ", 60), 0)
+	fc := &fakeCtx{callback: &tele.Callback{Data: strconv.FormatInt(id, 10)}}
+
+	if err := tb.cbEditExpand(fc); err != nil {
+		t.Fatalf("cbEditExpand: %v", err)
+	}
+	ed, ok := fc.lastEdit()
+	if !ok {
+		t.Fatal("expand should edit the menu in place, not send a new message")
+	}
+	if mk := markupOf(t, ed.Opts); markupHasButton(mk, tb.msg.ShowFullBtn) {
+		t.Error("after expand the Show-full button should be gone")
+	}
+}
+
 // --- helpers --------------------------------------------------------------
 
 func markupOf(t *testing.T, opts []interface{}) *tele.ReplyMarkup {

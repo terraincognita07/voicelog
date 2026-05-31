@@ -21,14 +21,17 @@ import (
 //	✏️ Note #15 — what do you want to change?
 //	«позвонить Коле завтра»
 //	[🔤 Replace a word] [📝 Rewrite all]
+//	[📖 Show full]   (long notes only — cbEditExpand)
 //	[✗ Cancel]
 //
 // 🔤 asks which word → with what; when that word matches more than once an
 // occurrence picker (editAwaitPick) lets the user replace just one or all.
-// 📝 asks for the whole new text. The typed answers are caught by continueEdit
-// (via onText's editState check), applied through db.ArchiveAndUpdateText
-// (previous text kept in notes_history), and the note message is updated in
-// place. The user's typed messages are deleted so the chat stays clean.
+// 📝 asks for the whole new text. A long note's preview is clipped; 📖 Show
+// full (cbEditExpand) expands it in place so the user can read it all before
+// choosing. The typed answers are caught by continueEdit (via onText's
+// editState check), applied through db.ArchiveAndUpdateText (previous text
+// kept in notes_history), and the note message is updated in place. The
+// user's typed messages are deleted so the chat stays clean.
 //
 // State is a single in-memory slot on the Bot (the bot is single-user); a
 // second ✏️ supersedes any half-finished edit, and a bot restart simply drops
@@ -39,6 +42,7 @@ var (
 	editFullBtn    = tele.InlineButton{Unique: "edit_full"}   // 📝 rewrite the whole text
 	editCancelBtn  = tele.InlineButton{Unique: "edit_cancel"} // ✗ cancel, restore the note
 	editPickBtn    = tele.InlineButton{Unique: "edit_pick"}   // ‹n›/all occurrence picker for Replace
+	editExpandBtn  = tele.InlineButton{Unique: "edit_expand"} // 📖 expand the clipped preview to full text
 )
 
 // editStep marks which typed answer the flow is waiting for.
@@ -114,9 +118,13 @@ func (tb *Bot) cancelKB(data string) *tele.ReplyMarkup {
 }
 
 // renderEditMenu builds the edit-menu body (header + note preview) and its
-// [🔤][📝] / [✗] keyboard. A non-empty header overrides the default question —
-// used to prepend a "word not found" note when a replace misses.
-func (tb *Bot) renderEditMenu(ctx context.Context, id int64, kind, state, header string) (string, *tele.ReplyMarkup, error) {
+// [🔤][📝] / [📖]? / [✗] keyboard. A non-empty header overrides the default
+// question (used to prepend a "word not found" note when a replace misses).
+// expanded=false clips the preview to savedPreviewLen and adds a [📖 Show full]
+// button when the note is longer; expanded=true shows the whole note (card cap)
+// and drops that button — so the user can read the full text before choosing
+// what to change, without leaving the menu.
+func (tb *Bot) renderEditMenu(ctx context.Context, id int64, kind, state, header string, expanded bool) (string, *tele.ReplyMarkup, error) {
 	n, err := tb.db.GetNote(ctx, id)
 	if err != nil {
 		return "", nil, err
@@ -125,7 +133,12 @@ func (tb *Bot) renderEditMenu(ctx context.Context, id int64, kind, state, header
 	if body == "" {
 		body = tb.msg.EditPrompt(id)
 	}
-	if preview := previewText(strings.ReplaceAll(n.RawText, "\n", " "), savedPreviewLen); preview != "" {
+	flat := strings.ReplaceAll(n.RawText, "\n", " ")
+	limit := savedPreviewLen
+	if expanded {
+		limit = fullPreviewLen
+	}
+	if preview := previewText(flat, limit); preview != "" {
 		body += "\n\n«" + preview + "»"
 	}
 	data := editOriginData(id, kind, state)
@@ -138,8 +151,15 @@ func (tb *Bot) renderEditMenu(ctx context.Context, id int64, kind, state, header
 	cancel := editCancelBtn
 	cancel.Text = tb.msg.DeleteNoBtn
 	cancel.Data = data
-	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{repl, full}, {cancel}}}
-	return body, kb, nil
+	rows := [][]tele.InlineButton{{repl, full}}
+	if !expanded && len([]rune(flat)) > savedPreviewLen {
+		expand := editExpandBtn
+		expand.Text = tb.msg.ShowFullBtn
+		expand.Data = data
+		rows = append(rows, []tele.InlineButton{expand})
+	}
+	rows = append(rows, []tele.InlineButton{cancel})
+	return body, &tele.ReplyMarkup{InlineKeyboard: rows}, nil
 }
 
 // renderEditedNote rebuilds the originating view once an edit lands or is
@@ -181,7 +201,33 @@ func (tb *Bot) cbEditOpen(c tele.Context) error {
 	tb.clearEditState() // a fresh ✏️ supersedes any half-finished edit
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	body, kb, err := tb.renderEditMenu(ctx, id, kind, state, "")
+	body, kb, err := tb.renderEditMenu(ctx, id, kind, state, "", false)
+	if err != nil {
+		if errors.Is(err, db.ErrNoteNotFound) {
+			tb.tryEdit(c, tb.msg.NotFound(id))
+			return c.Respond()
+		}
+		return tb.errToast(c, "refresh", err)
+	}
+	tb.tryEdit(c, body, kb)
+	return c.Respond()
+}
+
+// cbEditExpand re-renders the edit menu with the full note text in place — the
+// compact menu clips to savedPreviewLen, which hides the rest of a long note
+// from the person trying to edit it. View-only: editState is untouched.
+func (tb *Bot) cbEditExpand(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, kind, state, ok := editOriginFromData(cb.Data)
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	body, kb, err := tb.renderEditMenu(ctx, id, kind, state, "", true)
 	if err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
 			tb.tryEdit(c, tb.msg.NotFound(id))
@@ -319,7 +365,7 @@ func (tb *Bot) advanceEdit(ctx context.Context, pe *pendingEdit, text string) (s
 		cnt := strings.Count(n.RawText, text)
 		if cnt == 0 {
 			// Not there — back to the menu with a short note; user retries or cancels.
-			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(text))
+			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(text), false)
 			return body, kb, true, err
 		}
 		pe.find = text
@@ -350,7 +396,7 @@ func (tb *Bot) advanceEdit(ctx context.Context, pe *pendingEdit, text string) (s
 		if !ok {
 			// The find term vanished between steps (rare; e.g. an MCP-side edit)
 			// — nothing to replace, back to the menu.
-			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(pe.find))
+			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(pe.find), false)
 			return body, kb, true, err
 		}
 		if err := tb.archiveText(ctx, pe.noteID, newText); err != nil {

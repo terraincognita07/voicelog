@@ -86,7 +86,8 @@ Reading order:
    confirm, the `✏️`/`🗑` saved-reply markup, show-full).
 4. `edit_note.go` — the `✏️ Edit` flow shared by the saved reply and the note
    card: in-place menu, replace-a-word (with an occurrence picker when the word
-   matches more than once), rewrite-all, and the in-memory `editState` slot.
+   matches more than once), rewrite-all, `📖 Show full` to expand a long note,
+   and the in-memory `editState` slot.
 5. `list_view.go` — `/pending` and `/recent`. State encoding, day grouping,
    filter chips, "Show more" pagination, mass-delete confirm. Each note's
    `[#id]` button opens its card.
