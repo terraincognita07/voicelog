@@ -9,6 +9,25 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-06-01
+
+### Changed
+
+- **MCP tool errors are now sanitized.** Internal/store failures return a
+  generic `"<tool> failed — see server logs"` instead of the raw error
+  (which could carry SQL text or the DB file path), matching the bot's
+  existing policy. Validation, not-found, and `search_notes` FTS5-query
+  errors still return verbatim — they describe the caller's own input and
+  are path-free, so they stay useful for fixing a query.
+- **MCP `serverVersion` bumped `0.8.0` → `0.8.1`** to track the release tag.
+
+### Fixed
+
+- **Batch operations over large id lists no longer hit SQLite's variable
+  limit.** `mark_analyzed` / `delete_notes` now chunk their id lists (500
+  per batch), so a list past `SQLITE_MAX_VARIABLE_NUMBER` (~32k) no longer
+  fails with "too many SQL variables".
+
 ## [0.8.0] — 2026-06-01
 
 ### Added
