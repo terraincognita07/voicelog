@@ -1,4 +1,4 @@
--- v0.4.0 — note tags. A many-to-many overlay between notes and free-form
+-- v0.5.0 — note tags. A many-to-many overlay between notes and free-form
 -- category labels.
 --
 -- Tags live on the analysis side: Claude (via the MCP tag tools) labels
@@ -7,7 +7,7 @@
 -- table (rather than a column on notes) keeps the rollback a plain
 -- DROP TABLE and avoids touching the FTS5 triggers.
 --
--- ON DELETE CASCADE: a permanent note delete (v0.4.0) drops the note's tags
+-- ON DELETE CASCADE: a permanent note delete (v0.5.0) drops the note's tags
 -- in the same statement — foreign_keys is ON via the Open() DSN.
 CREATE TABLE IF NOT EXISTS note_tags (
   note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,

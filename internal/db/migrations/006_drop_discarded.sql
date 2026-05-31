@@ -1,4 +1,4 @@
--- v0.4.0 — permanent delete replaces the 'discarded' soft-delete state.
+-- v0.5.0 — permanent delete replaces the 'discarded' soft-delete state.
 --
 -- Any notes still parked in 'discarded' are removed for good. The FTS5
 -- AFTER DELETE trigger (notes_ad) drops them from the search index, and the

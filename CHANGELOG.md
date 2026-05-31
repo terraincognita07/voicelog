@@ -25,7 +25,7 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
     `{deleted: N}`, `destructive` hint, removes audio too). `restore_note`
     **removed**. The `include_discarded` parameter and the `discarded` status
     value are gone from `search_notes` / `get_notes_in_range`. `retranscribe`
-    no longer carries a discarded guard. `serverVersion` 0.3.0 → 0.4.0; tool
+    no longer carries a discarded guard. `serverVersion` 0.3.0 → 0.5.0; tool
     count 12 → 11.
   - **Migration `006_drop_discarded.sql`** deletes any rows still parked in
     `discarded` on the first start of the new version (their audio is
