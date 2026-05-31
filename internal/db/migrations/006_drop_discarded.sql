@@ -1,0 +1,15 @@
+-- v0.4.0 — permanent delete replaces the 'discarded' soft-delete state.
+--
+-- Any notes still parked in 'discarded' are removed for good. The FTS5
+-- AFTER DELETE trigger (notes_ad) drops them from the search index, and the
+-- notes_history ON DELETE CASCADE FK clears their edit history in the same
+-- statement (foreign_keys is ON via the Open() DSN).
+--
+-- Retained .oga audio for these rows is NOT touched here — a SQL migration
+-- can't reach the filesystem. The bot's startup orphan scan + janitor will
+-- surface and reclaim those files.
+--
+-- The status CHECK constraint still lists 'discarded': rewriting a CHECK in
+-- SQLite means a full table rebuild (drop/recreate + FTS reindex), which is
+-- not worth it. The value is simply never written again by any code path.
+DELETE FROM notes WHERE status = 'discarded';

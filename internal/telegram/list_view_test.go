@@ -100,10 +100,10 @@ func TestRenderPending_Empty(t *testing.T) {
 	if body != tb.msg.EmptyPending {
 		t.Errorf("empty body should be EmptyPending, got %q", body)
 	}
-	// Empty state must offer the [Show discarded] escape hatch.
-	rows := keyboardTexts(kb)
-	if len(rows) != 1 || len(rows[0]) != 1 || rows[0][0] != tb.msg.GoDiscardedBtn {
-		t.Errorf("empty keyboard should have [Show discarded] only, got %v", rows)
+	// Empty /pending carries no keyboard now — there's no soft-delete bin
+	// to navigate to.
+	if kb != nil {
+		t.Errorf("empty keyboard should be nil, got %v", keyboardTexts(kb))
 	}
 }
 
@@ -232,46 +232,40 @@ func TestRenderRecent_FilterChipsAlwaysPresent(t *testing.T) {
 		t.Fatal("empty /recent must still render the chip row")
 	}
 	chips := rows[0]
-	if len(chips) != 3 {
-		t.Fatalf("expected 3 filter chips, got %v", chips)
+	if len(chips) != 2 {
+		t.Fatalf("expected 2 filter chips, got %v", chips)
 	}
 }
 
-func TestRenderRecent_DiscardedFilterShowsRestoreButtons(t *testing.T) {
+func TestRenderRecent_PendingFilterShowsDeleteButtons(t *testing.T) {
 	tb := newTestBot(t)
 	now := time.Now()
-	id := seedNoteAt(t, tb, now.Add(-1*time.Minute), "to be discarded")
-	if err := tb.db.MarkDiscarded(context.Background(), id); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
+	id := seedNoteAt(t, tb, now.Add(-1*time.Minute), "pending row")
 
-	body, kb, err := tb.renderRecent(context.Background(), recentState{Filter: "discarded", Limit: recentPageSize})
+	body, kb, err := tb.renderRecent(context.Background(), recentState{Filter: "pending", Limit: recentPageSize})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	if !strings.Contains(body, "to be discarded") {
-		t.Errorf("body must contain discarded note: %q", body)
+	if !strings.Contains(body, "pending row") {
+		t.Errorf("body must contain the note: %q", body)
 	}
-	// Active chip marked with bullet.
+	// Active "Pending" chip marked with bullet (chips are [All][Pending]).
 	rows := keyboardTexts(kb)
-	if rows[0][2] != tb.msg.FilterActiveMark+tb.msg.FilterDiscardedBtn {
-		t.Errorf("Discarded chip not marked active: %q", rows[0][2])
+	if rows[0][1] != tb.msg.FilterActiveMark+tb.msg.FilterPendingBtn {
+		t.Errorf("Pending chip not marked active: %q", rows[0][1])
 	}
-	// Restore button (↩) must appear; trash must NOT for discarded note.
-	want := "↩ #" + itoa(id)
+	// Each visible note offers a 🗑 delete button.
+	want := "🗑 #" + itoa(id)
 	found := false
 	for _, row := range rows {
 		for _, c := range row {
 			if c == want {
 				found = true
 			}
-			if c == "🗑 #"+itoa(id) {
-				t.Errorf("trash button should not appear for discarded note")
-			}
 		}
 	}
 	if !found {
-		t.Errorf("missing restore button %q; got %v", want, rows)
+		t.Errorf("missing delete button %q; got %v", want, rows)
 	}
 }
 
@@ -289,22 +283,36 @@ func TestRenderRecent_AllFilterShowsStatusInBody(t *testing.T) {
 	}
 }
 
-func TestRenderRecent_DiscardedFilterHidesStatusInBody(t *testing.T) {
+func TestRenderRecent_FilterSetHidesStatusInBody(t *testing.T) {
 	tb := newTestBot(t)
 	now := time.Now()
-	id := seedNoteAt(t, tb, now.Add(-1*time.Minute), "abc")
-	_ = tb.db.MarkDiscarded(context.Background(), id)
-	body, _, err := tb.renderRecent(context.Background(), recentState{Filter: "discarded", Limit: recentPageSize})
+	seedNoteAt(t, tb, now.Add(-1*time.Minute), "abc")
+	body, _, err := tb.renderRecent(context.Background(), recentState{Filter: "pending", Limit: recentPageSize})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	// When filter is set, body should NOT repeat the status word.
-	if strings.Contains(body, "["+tb.msg.Status("discarded")+"]") {
+	// When a filter is set, body should NOT repeat the status word.
+	if strings.Contains(body, "["+tb.msg.Status("pending")+"]") {
 		t.Errorf("filter-set view must not repeat status in body: %q", body)
 	}
 }
 
 // --- helpers --------------------------------------------------------------
+
+// TestFormatNoteLine_ShowsTags asserts the list line appends the 🏷 tag
+// chips when a note has tags, and omits the glyph when it has none.
+func TestFormatNoteLine_ShowsTags(t *testing.T) {
+	tb := newTestBot(t)
+	n := db.Note{ID: 7, RawText: "hello", Status: db.StatusPending}
+
+	withTags := tb.formatNoteLine(n, false, []string{"идея", "todo"})
+	if !strings.Contains(withTags, "🏷") || !strings.Contains(withTags, "идея") || !strings.Contains(withTags, "todo") {
+		t.Errorf("line should show tags: %q", withTags)
+	}
+	if noTags := tb.formatNoteLine(n, false, nil); strings.Contains(noTags, "🏷") {
+		t.Errorf("line without tags must not show the tag glyph: %q", noTags)
+	}
+}
 
 func itoa(n int64) string {
 	return strings.TrimSpace(formatInt(n))

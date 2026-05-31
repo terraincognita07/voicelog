@@ -66,7 +66,7 @@ func FuzzSearchNotes_QueryString(f *testing.F) {
 	f.Fuzz(func(t *testing.T, query string) {
 		// Contract: SearchNotes may return a syntax/empty-query error,
 		// or zero or more matches. It must NEVER panic.
-		got, err := d.SearchNotes(ctx, query, 20, false)
+		got, err := d.SearchNotes(ctx, query, 20)
 		if err == nil && got == nil {
 			// nil slice from no-match is allowed (driver-dependent).
 			return

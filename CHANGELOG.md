@@ -9,6 +9,50 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-31
+
+### Changed (breaking)
+
+- **`discarded` soft-delete replaced by permanent delete.** The bot's 🗑 and
+  the MCP tools no longer park a note in a hidden `discarded` state — they
+  erase it: the row, its edit history (`notes_history`), and any retained
+  `.oga` audio file are removed for good. Irreversible.
+  - **Bot:** 🗑 on a saved-note reply and on `/pending` / `/recent` rows now
+    asks `Delete #N permanently?` (`[✓ Yes, delete]` / `[✗ Cancel]`) before
+    erasing. The `↩ Restore` button and the `[Discarded]` filter chip are
+    gone; `/delete <id>` and `[🗑 Delete all]` delete for good.
+  - **MCP (contract change):** `discard_notes` → **`delete_notes`** (returns
+    `{deleted: N}`, `destructive` hint, removes audio too). `restore_note`
+    **removed**. The `include_discarded` parameter and the `discarded` status
+    value are gone from `search_notes` / `get_notes_in_range`. `retranscribe`
+    no longer carries a discarded guard. `serverVersion` 0.3.0 → 0.4.0; tool
+    count 12 → 11.
+  - **Migration `006_drop_discarded.sql`** deletes any rows still parked in
+    `discarded` on the first start of the new version (their audio is
+    reclaimed by the startup orphan scan / janitor). The `status` CHECK still
+    lists `discarded` — rewriting it would need a full table rebuild — but no
+    code path writes it anymore. **No rollback for already-deleted rows**
+    beyond a database backup.
+
+### Added
+
+- **Note tags.** Notes can carry free-form category labels (`#идея`, `#todo`,
+  `#философия`) — an analysis-side overlay that complements full-text search.
+  A tag captures a *judgment that isn't in the note's words*, so
+  `notes_by_tag("философия")` finds every philosophical note even when the
+  word itself never appears. Four new MCP tools — `tag_note(id, tags[])`,
+  `untag_note(id, tag)`, `list_tags()`, `notes_by_tag(tag)` — let Claude label
+  the corpus and pull deterministic selections; every note object now carries
+  a `tags` field. The bot shows `🏷` tags inline in `/pending` and `/recent`.
+  Storage is a separate `note_tags` table (migration `007_tags.sql`, FK
+  `ON DELETE CASCADE`), so deleting a note drops its tags too. MCP tool count
+  11 → 15.
+- **Find→replace editing.** The bot's `✏️ Edit` now accepts an `old → new`
+  reply (separators `→` / `->` / `=>`) in addition to full-text replacement:
+  it swaps every occurrence of `old` in the note, so fixing a single
+  whisper-misheard word no longer means retyping the whole transcript. The
+  previous text is still archived to `notes_history`.
+
 ## [0.3.0] — 2026-05-28
 
 ### Added

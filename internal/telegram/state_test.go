@@ -20,7 +20,7 @@ func TestRecentStateRoundtrip(t *testing.T) {
 	cases := []recentState{
 		{Filter: "", Limit: 10, ExpDay: ""},
 		{Filter: "pending", Limit: 30, ExpDay: "2026-05-26"},
-		{Filter: "discarded", Limit: 40, ExpDay: ""},
+		{Filter: "pending", Limit: 40, ExpDay: ""},
 	}
 	for _, in := range cases {
 		got := parseRecentState(in.encode())
@@ -43,7 +43,7 @@ func TestPendingStateWithID(t *testing.T) {
 }
 
 func TestRecentStateWithID(t *testing.T) {
-	st := recentState{Filter: "discarded", Limit: 30, ExpDay: "2026-05-26"}
+	st := recentState{Filter: "pending", Limit: 30, ExpDay: "2026-05-26"}
 	encoded := st.encodeWithID(42)
 	gotID, gotState := parseRecentStateWithID(encoded)
 	if gotID != 42 {
@@ -98,14 +98,14 @@ func TestValidDateKey(t *testing.T) {
 }
 
 func TestValidRecentFilter(t *testing.T) {
-	// Whitelist: only "pending" and "discarded" survive. Anything
-	// else — including "analyzed", "all", garbage, mixed case —
-	// collapses to "" (= no filter).
+	// Whitelist: only "pending" survives. Anything else — including
+	// "discarded" (a now-removed status), "analyzed", "all", garbage,
+	// mixed case — collapses to "" (= no filter).
 	cases := []struct {
 		in, want string
 	}{
 		{"pending", "pending"},
-		{"discarded", "discarded"},
+		{"discarded", ""},
 		{"", ""},
 		{"all", ""},
 		{"analyzed", ""}, // valid db.Status but not a UI chip
@@ -176,9 +176,9 @@ func TestParseRecentState_EdgeDefaults(t *testing.T) {
 		{"valid filter no rest", "pending", recentState{Filter: "pending", Limit: recentPageSize}},
 		{"valid filter zero limit", "pending:0", recentState{Filter: "pending", Limit: recentPageSize}},
 		{"valid filter neg limit", "pending:-1", recentState{Filter: "pending", Limit: recentPageSize}},
-		{"valid filter valid limit", "discarded:25", recentState{Filter: "discarded", Limit: 25}},
-		{"valid filter valid limit invalid date", "discarded:25:nope", recentState{Filter: "discarded", Limit: 25}},
-		{"full happy", "discarded:25:2026-05-26", recentState{Filter: "discarded", Limit: 25, ExpDay: "2026-05-26"}},
+		{"valid filter valid limit", "pending:25", recentState{Filter: "pending", Limit: 25}},
+		{"valid filter valid limit invalid date", "pending:25:nope", recentState{Filter: "pending", Limit: 25}},
+		{"full happy", "pending:25:2026-05-26", recentState{Filter: "pending", Limit: 25, ExpDay: "2026-05-26"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -192,7 +192,7 @@ func TestParseRecentState_EdgeDefaults(t *testing.T) {
 func TestEncodeLimitsFit64Bytes(t *testing.T) {
 	// Telegram caps callback data at 64 bytes. The longest realistic
 	// payload we generate is an action button with state.
-	st := recentState{Filter: "discarded", Limit: 99999, ExpDay: "2026-05-26"}
+	st := recentState{Filter: "pending", Limit: 99999, ExpDay: "2026-05-26"}
 	if got := len(st.encodeWithID(999999999999)); got > 64 {
 		t.Errorf("recent encodeWithID = %d bytes, exceeds Telegram 64-byte cap", got)
 	}

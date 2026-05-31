@@ -69,7 +69,7 @@ func TestGetNotesInRange(t *testing.T) {
 
 	from := time.Unix(1700_000_050, 0)
 	to := time.Unix(1700_000_250, 0)
-	notes, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
 	if err != nil {
 		t.Fatalf("range: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestGetNotesInRange(t *testing.T) {
 
 	// Status filter.
 	_, _ = d.ExecContext(ctx, `UPDATE notes SET status='analyzed' WHERE created_at = 1700000200`)
-	pending, err := d.GetNotesInRange(ctx, from, to, "pending", 0, false)
+	pending, err := d.GetNotesInRange(ctx, from, to, "pending", 0)
 	if err != nil {
 		t.Fatalf("range pending: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	to := time.Unix(base+int64(db.MaxNotesInRange)+100, 0)
 
 	// limit=0 → clamp to MaxNotesInRange.
-	notes, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
+	notes, err := d.GetNotesInRange(ctx, from, to, "", 0)
 	if err != nil {
 		t.Fatalf("range default: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	}
 
 	// Over-cap value also clamps.
-	notes, err = d.GetNotesInRange(ctx, from, to, "", db.MaxNotesInRange*2, true)
+	notes, err = d.GetNotesInRange(ctx, from, to, "", db.MaxNotesInRange*2)
 	if err != nil {
 		t.Fatalf("range over-cap: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestGetNotesInRangeRespectsCap(t *testing.T) {
 	}
 
 	// Smaller explicit limit honored.
-	notes, err = d.GetNotesInRange(ctx, from, to, "", 7, true)
+	notes, err = d.GetNotesInRange(ctx, from, to, "", 7)
 	if err != nil {
 		t.Fatalf("range small limit: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSearchNotes(t *testing.T) {
 		t.Fatalf("seed 3: %v", err)
 	}
 
-	hits, err := d.SearchNotes(ctx, "voicelog", 10, false)
+	hits, err := d.SearchNotes(ctx, "voicelog", 10)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestSearchNotes(t *testing.T) {
 		t.Fatalf("snippet should wrap matched term in << >>, got %q", hits[0].Snippet)
 	}
 
-	_, err = d.SearchNotes(ctx, "", 10, false)
+	_, err = d.SearchNotes(ctx, "", 10)
 	if err == nil {
 		t.Fatalf("expected error on empty query")
 	}
@@ -207,7 +207,7 @@ func TestSearchNotes_RussianMorphology(t *testing.T) {
 		{"молоко", 2, "finds 'молоко' and 'молока'"},
 	}
 	for _, c := range cases {
-		hits, err := d.SearchNotes(ctx, c.query, 20, false)
+		hits, err := d.SearchNotes(ctx, c.query, 20)
 		if err != nil {
 			t.Fatalf("search %q: %v", c.query, err)
 		}
@@ -217,7 +217,7 @@ func TestSearchNotes_RussianMorphology(t *testing.T) {
 	}
 
 	// English must NOT be prefix-expanded — "meet" should not pull "meeting".
-	hits, err := d.SearchNotes(ctx, "meet", 20, false)
+	hits, err := d.SearchNotes(ctx, "meet", 20)
 	if err != nil {
 		t.Fatalf("search 'meet': %v", err)
 	}
@@ -226,76 +226,34 @@ func TestSearchNotes_RussianMorphology(t *testing.T) {
 	}
 }
 
-func TestSearchNotesExcludesDiscardedByDefault(t *testing.T) {
+// TestDeleteNoteRemovesFromSearch asserts the FTS5 AFTER DELETE trigger
+// drops a deleted note from the search index — it's gone, not just hidden.
+func TestDeleteNoteRemovesFromSearch(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 
 	id, _ := d.InsertNote(ctx, "уникальное слово фламинго один", 1)
-	if err := d.MarkDiscarded(ctx, id); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
 	if _, err := d.InsertNote(ctx, "уникальное слово фламинго два", 1); err != nil {
-		t.Fatalf("insert pending: %v", err)
+		t.Fatalf("insert second: %v", err)
 	}
 
-	hits, err := d.SearchNotes(ctx, "фламинго", 10, false)
+	// Both notes match before the delete.
+	if hits, err := d.SearchNotes(ctx, "фламинго", 10); err != nil || len(hits) != 2 {
+		t.Fatalf("want 2 hits before delete, got %d (err=%v)", len(hits), err)
+	}
+
+	if _, err := d.DeleteNote(ctx, id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	hits, err := d.SearchNotes(ctx, "фламинго", 10)
 	if err != nil {
-		t.Fatalf("search default: %v", err)
+		t.Fatalf("search after delete: %v", err)
 	}
 	if len(hits) != 1 {
-		t.Fatalf("default must hide discarded: want 1 hit, got %d", len(hits))
+		t.Fatalf("delete must remove the row from search: want 1 hit, got %d", len(hits))
 	}
-	if hits[0].Status != db.StatusPending {
-		t.Fatalf("expected pending hit, got %q", hits[0].Status)
-	}
-
-	all, err := d.SearchNotes(ctx, "фламинго", 10, true)
-	if err != nil {
-		t.Fatalf("search include: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("include_discarded must surface both: got %d", len(all))
-	}
-}
-
-func TestGetNotesInRangeExcludesDiscardedByDefault(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-
-	now := time.Now()
-	if _, err := d.InsertNote(ctx, "pending one", 1); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-	id2, _ := d.InsertNote(ctx, "to discard", 1)
-	if err := d.MarkDiscarded(ctx, id2); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-	from := now.Add(-time.Hour)
-	to := now.Add(time.Hour)
-
-	def, err := d.GetNotesInRange(ctx, from, to, "", 0, false)
-	if err != nil {
-		t.Fatalf("range default: %v", err)
-	}
-	if len(def) != 1 {
-		t.Fatalf("default must exclude discarded: got %d", len(def))
-	}
-
-	all, err := d.GetNotesInRange(ctx, from, to, "", 0, true)
-	if err != nil {
-		t.Fatalf("range include: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("include_discarded must show both: got %d", len(all))
-	}
-
-	// Explicit status='discarded' wins over include_discarded=false.
-	only, err := d.GetNotesInRange(ctx, from, to, "discarded", 0, false)
-	if err != nil {
-		t.Fatalf("range status discarded: %v", err)
-	}
-	if len(only) != 1 || only[0].Status != db.StatusDiscarded {
-		t.Fatalf("explicit status filter must surface discarded: %+v", only)
+	if hits[0].ID == id {
+		t.Fatalf("deleted note %d still surfaced in search", id)
 	}
 }
 
@@ -306,9 +264,9 @@ func TestMarkAnalyzed(t *testing.T) {
 	id1, _ := d.InsertNote(ctx, "a", 1)
 	id2, _ := d.InsertNote(ctx, "b", 1)
 	id3, _ := d.InsertNote(ctx, "c", 1)
-	// Discard one — must not be re-flipped.
-	if err := d.MarkDiscarded(ctx, id3); err != nil {
-		t.Fatalf("discard: %v", err)
+	// Pre-analyze one — must not be re-flipped (only pending → analyzed counts).
+	if _, err := d.MarkAnalyzed(ctx, []int64{id3}); err != nil {
+		t.Fatalf("seed analyzed: %v", err)
 	}
 
 	n, err := d.MarkAnalyzed(ctx, []int64{id1, id2, id3, 9999})
@@ -316,7 +274,7 @@ func TestMarkAnalyzed(t *testing.T) {
 		t.Fatalf("mark analyzed: %v", err)
 	}
 	if n != 2 {
-		t.Fatalf("want 2 updates (id1, id2 — id3 discarded, 9999 missing), got %d", n)
+		t.Fatalf("want 2 updates (id1, id2 — id3 already analyzed, 9999 missing), got %d", n)
 	}
 
 	// Idempotent: re-running yields more updates only if rows actually change.
@@ -360,64 +318,49 @@ func TestGetNote(t *testing.T) {
 	}
 }
 
-func TestDiscardNotes(t *testing.T) {
+func TestDeleteNotes(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 
 	id1, _ := d.InsertNote(ctx, "a", 1)
 	id2, _ := d.InsertNote(ctx, "b", 1)
 	id3, _ := d.InsertNote(ctx, "c", 1)
-	// id3 already discarded.
-	if err := d.MarkDiscarded(ctx, id3); err != nil {
-		t.Fatalf("seed discard: %v", err)
-	}
 
-	n, err := d.DiscardNotes(ctx, []int64{id1, id2, id3, 99999})
+	paths, n, err := d.DeleteNotes(ctx, []int64{id1, id2, 99999})
 	if err != nil {
-		t.Fatalf("discard notes: %v", err)
+		t.Fatalf("delete notes: %v", err)
 	}
 	if n != 2 {
-		t.Fatalf("want 2 flipped (id3 already discarded, 99999 missing), got %d", n)
+		t.Fatalf("want 2 deleted (99999 missing), got %d", n)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("seeded notes had no audio_path, want 0 paths, got %d", len(paths))
 	}
 
-	if pending, _ := d.CountPending(ctx); pending != 0 {
-		t.Fatalf("expected 0 pending after mass discard, got %d", pending)
+	// id1, id2 are gone; id3 remains pending.
+	if _, err := d.GetNote(ctx, id1); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("id1 should be gone, got %v", err)
+	}
+	if got, err := d.GetNote(ctx, id3); err != nil || got.Status != db.StatusPending {
+		t.Fatalf("id3 should remain pending, got %+v err=%v", got, err)
+	}
+
+	// A note with retained audio returns its path for on-disk cleanup.
+	id4, _ := d.InsertNote(ctx, "with audio", 1)
+	if err := d.SetAudioPath(ctx, id4, "4.oga"); err != nil {
+		t.Fatalf("set audio: %v", err)
+	}
+	paths, n, err = d.DeleteNotes(ctx, []int64{id4})
+	if err != nil || n != 1 {
+		t.Fatalf("delete id4: n=%d err=%v", n, err)
+	}
+	if len(paths) != 1 || paths[0] != "4.oga" {
+		t.Fatalf("want audio path [4.oga], got %v", paths)
 	}
 
 	// Empty ids → no-op.
-	if n, err := d.DiscardNotes(ctx, nil); err != nil || n != 0 {
-		t.Fatalf("empty ids: n=%d err=%v", n, err)
-	}
-}
-
-func TestRestoreNote(t *testing.T) {
-	ctx := context.Background()
-	d := openTestDB(t)
-
-	id, _ := d.InsertNote(ctx, "to restore", 1)
-	if err := d.MarkDiscarded(ctx, id); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-
-	ok, err := d.RestoreNote(ctx, id)
-	if err != nil || !ok {
-		t.Fatalf("restore: ok=%v err=%v", ok, err)
-	}
-	got, _ := d.GetNote(ctx, id)
-	if got.Status != db.StatusPending {
-		t.Fatalf("want pending after restore, got %q", got.Status)
-	}
-
-	// Restoring a non-discarded note → (false, nil).
-	ok, err = d.RestoreNote(ctx, id)
-	if err != nil || ok {
-		t.Fatalf("restore non-discarded: ok=%v err=%v", ok, err)
-	}
-
-	// Unknown id → ErrNoteNotFound.
-	_, err = d.RestoreNote(ctx, 99999)
-	if !errors.Is(err, db.ErrNoteNotFound) {
-		t.Fatalf("want ErrNoteNotFound, got %v", err)
+	if p, n, err := d.DeleteNotes(ctx, nil); err != nil || n != 0 || p != nil {
+		t.Fatalf("empty ids: p=%v n=%d err=%v", p, n, err)
 	}
 }
 
@@ -549,11 +492,11 @@ func TestArchiveAndUpdateText_FTSReflectsNewText(t *testing.T) {
 		t.Fatalf("archive: %v", err)
 	}
 	// Existing FTS UPDATE trigger should swap old → new in the index.
-	hits, _ := d.SearchNotes(ctx, "альфа", 10, false)
+	hits, _ := d.SearchNotes(ctx, "альфа", 10)
 	if len(hits) != 0 {
 		t.Errorf("old term still in FTS index after retranscribe: %d hits", len(hits))
 	}
-	hits, _ = d.SearchNotes(ctx, "бета", 10, false)
+	hits, _ = d.SearchNotes(ctx, "бета", 10)
 	if len(hits) != 1 {
 		t.Errorf("new term not indexed: %d hits", len(hits))
 	}
@@ -872,24 +815,24 @@ func TestMigrateIsTracked(t *testing.T) {
 	}
 }
 
-func TestDiscardAllPending(t *testing.T) {
+func TestDeleteAllPending(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 
 	id1, _ := d.InsertNote(ctx, "a", 1)
 	id2, _ := d.InsertNote(ctx, "b", 1)
 	id3, _ := d.InsertNote(ctx, "c", 1)
-	// Mix the statuses: id3 → analyzed must NOT flip; id1, id2 stay pending.
+	// Mix the statuses: id3 → analyzed must NOT be deleted; id1, id2 stay pending.
 	if _, err := d.MarkAnalyzed(ctx, []int64{id3}); err != nil {
 		t.Fatalf("mark analyzed: %v", err)
 	}
 
-	n, err := d.DiscardAllPending(ctx)
+	_, n, err := d.DeleteAllPending(ctx)
 	if err != nil {
-		t.Fatalf("clear pending: %v", err)
+		t.Fatalf("delete pending: %v", err)
 	}
 	if n != 2 {
-		t.Fatalf("want 2 discarded (id1, id2), got %d", n)
+		t.Fatalf("want 2 deleted (id1, id2), got %d", n)
 	}
 
 	// id3 must still be analyzed (untouched).
@@ -899,78 +842,74 @@ func TestDiscardAllPending(t *testing.T) {
 	}
 
 	// Re-run: no pending left.
-	n, err = d.DiscardAllPending(ctx)
+	_, n, err = d.DeleteAllPending(ctx)
 	if err != nil {
-		t.Fatalf("clear pending (idempotent): %v", err)
+		t.Fatalf("delete pending (idempotent): %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("second clear must flip 0 rows, got %d", n)
+		t.Fatalf("second delete must remove 0 rows, got %d", n)
 	}
 
-	// id1, id2 are now discarded.
+	// id1, id2 are gone for good.
 	for _, id := range []int64{id1, id2} {
-		got, _ := d.GetNote(ctx, id)
-		if got.Status != db.StatusDiscarded {
-			t.Fatalf("id %d should be discarded, got %q", id, got.Status)
+		if _, err := d.GetNote(ctx, id); !errors.Is(err, db.ErrNoteNotFound) {
+			t.Fatalf("id %d should be deleted, got %v", id, err)
 		}
 	}
 }
 
-func TestMarkDiscarded(t *testing.T) {
+func TestDeleteNote(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 
-	id, err := d.InsertNote(ctx, "to discard", 1)
+	id, err := d.InsertNote(ctx, "to delete", 1)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
-	if err := d.MarkDiscarded(ctx, id); err != nil {
-		t.Fatalf("discard: %v", err)
+	audioPath, err := d.DeleteNote(ctx, id)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if audioPath != "" {
+		t.Fatalf("note had no audio, want empty path, got %q", audioPath)
 	}
 
 	n, _ := d.CountPending(ctx)
 	if n != 0 {
-		t.Fatalf("expected 0 pending after discard, got %d", n)
+		t.Fatalf("expected 0 pending after delete, got %d", n)
 	}
 
-	// Idempotency: second call must report ErrNoteNotFound (already discarded).
-	err = d.MarkDiscarded(ctx, id)
-	if !errors.Is(err, db.ErrNoteNotFound) {
-		t.Fatalf("want ErrNoteNotFound on second discard, got %v", err)
+	// Second delete of the same id → ErrNoteNotFound.
+	if _, err := d.DeleteNote(ctx, id); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Fatalf("want ErrNoteNotFound on second delete, got %v", err)
 	}
 
 	// Non-existent id.
-	err = d.MarkDiscarded(ctx, 99999)
-	if !errors.Is(err, db.ErrNoteNotFound) {
+	if _, err := d.DeleteNote(ctx, 99999); !errors.Is(err, db.ErrNoteNotFound) {
 		t.Fatalf("want ErrNoteNotFound for missing id, got %v", err)
 	}
 
-	// Recent should still surface the discarded row.
+	// The row is gone from Recent, not just hidden.
 	recent, _ := d.ListRecent(ctx, 10)
-	if len(recent) != 1 || recent[0].Status != db.StatusDiscarded {
-		t.Fatalf("recent should show discarded row, got %+v", recent)
+	if len(recent) != 0 {
+		t.Fatalf("recent should be empty after delete, got %+v", recent)
 	}
 }
 
-// TestDiscardNotes_CallbackFlood models the "user taps the same
-// [🗑] button 50 times rapid-fire on a phone" scenario. The bot's
-// callback handler dispatches one DiscardNotes call per tap;
-// nothing serializes them. The behavior contract we promise:
+// TestDeleteNotes_CallbackFlood models the "user taps the same
+// [✓ Yes, delete] button 50 times rapid-fire on a phone" scenario. Each
+// tap dispatches one DeleteNotes call; nothing serializes them. Contract:
 //
 //  1. No panic / no SQLITE error under the storm.
-//  2. The row ends up `discarded` exactly once — not "discarded
-//     twice" or in an inconsistent intermediate state.
-//  3. Across N concurrent calls, the sum of `updated` returned by
-//     DiscardNotes is exactly 1. The first winning UPDATE flips
-//     status; every subsequent one matches "status != 'discarded'"
-//     filter against the already-flipped row and reports
-//     updated=0. That guarantees idempotency at the SQL level —
-//     even if the bot retries a callback because the user
-//     double-tapped through bad latency.
+//  2. The row is deleted exactly once — across N concurrent calls the
+//     sum of `deleted` returned by DeleteNotes is exactly 1. The first
+//     DELETE removes the row; every subsequent one matches nothing and
+//     reports 0. Idempotent even if the bot retries a callback because
+//     the user double-tapped through bad latency.
 //
 // MarkAnalyzed has the same contract; covered by a sibling test.
-func TestDiscardNotes_CallbackFlood(t *testing.T) {
+func TestDeleteNotes_CallbackFlood(t *testing.T) {
 	ctx := context.Background()
 	d := openTestDB(t)
 	id, err := d.InsertNote(ctx, "to be hammered", 5)
@@ -982,7 +921,7 @@ func TestDiscardNotes_CallbackFlood(t *testing.T) {
 	var (
 		wg          sync.WaitGroup
 		mu          sync.Mutex
-		totalFlips  int
+		totalDel    int
 		firstErr    error
 		startSignal = make(chan struct{})
 	)
@@ -991,34 +930,30 @@ func TestDiscardNotes_CallbackFlood(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-startSignal // line every goroutine up before they fire
-			n, err := d.DiscardNotes(ctx, []int64{id})
+			_, n, err := d.DeleteNotes(ctx, []int64{id})
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
-			totalFlips += n
+			totalDel += n
 		}()
 	}
 	close(startSignal)
 	wg.Wait()
 
 	if firstErr != nil {
-		t.Errorf("DiscardNotes errored under flood: %v", firstErr)
+		t.Errorf("DeleteNotes errored under flood: %v", firstErr)
 	}
-	if totalFlips != 1 {
-		t.Errorf("idempotency: want exactly 1 flip across %d calls, got %d", N, totalFlips)
+	if totalDel != 1 {
+		t.Errorf("idempotency: want exactly 1 delete across %d calls, got %d", N, totalDel)
 	}
-	got, err := d.GetNote(ctx, id)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Status != db.StatusDiscarded {
-		t.Errorf("final status: want discarded, got %q", got.Status)
+	if _, err := d.GetNote(ctx, id); !errors.Is(err, db.ErrNoteNotFound) {
+		t.Errorf("final: note should be gone, got %v", err)
 	}
 }
 
-// TestMarkAnalyzed_CallbackFlood mirrors the discard-flood test for
+// TestMarkAnalyzed_CallbackFlood mirrors the delete-flood test for
 // the analyzed transition. Same idempotency contract: among N
 // concurrent MarkAnalyzed calls on the same id, exactly one
 // UPDATE actually flips the row; the rest report updated=0

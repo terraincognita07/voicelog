@@ -74,17 +74,11 @@ func isBareCyrillicWord(s string) bool {
 // SearchNotes runs an FTS5 MATCH and returns rows ordered by bm25 rank
 // (lower rank = better match). query is passed through to FTS5 as-is, so it
 // supports the full FTS5 query syntax (phrases in quotes, OR, NEAR, *).
-// When includeDiscarded is false (the default callers want), discarded notes
-// are filtered out — they represent the user's explicit "forget this" signal.
-func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeDiscarded bool) ([]NoteWithRank, error) {
+func (db *DB) SearchNotes(ctx context.Context, query string, limit int) ([]NoteWithRank, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, errors.New("empty query")
 	}
 	query = stemCyrillicQuery(query)
-	statusFilter := ""
-	if !includeDiscarded {
-		statusFilter = ` AND n.status != 'discarded'`
-	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT n.id, n.created_at, n.raw_text, n.duration_sec, n.audio_path, n.status,
 		       n.confidence_overall, n.confidence_min, n.suspect_hallucination,
@@ -92,7 +86,7 @@ func (db *DB) SearchNotes(ctx context.Context, query string, limit int, includeD
 		       snippet(notes_fts, 0, '<<', '>>', '...', 30) AS snip
 		FROM notes_fts
 		JOIN notes n ON n.id = notes_fts.rowid
-		WHERE notes_fts MATCH ?`+statusFilter+`
+		WHERE notes_fts MATCH ?
 		ORDER BY rank
 		LIMIT ?`, query, limit)
 	if err != nil {

@@ -84,7 +84,7 @@ Reading order:
 2. `errors.go` — sanitization layer (`userErrMsg`, `errReply`, `errToast`).
 3. `saved_reply.go` — what the user sees after recording a voice.
 4. `list_view.go` — `/pending` and `/recent`. State encoding, day grouping,
-   filter chips, "Show more" pagination, mass-discard confirm. Generic
+   filter chips, "Show more" pagination, mass-delete confirm. Generic
    `cbListAction[S any]` helper de-duplicates the parse → mutate → re-render
    pattern.
 5. `vocab.go` — `/vocab` interactive editor with force-reply add prompt.
@@ -98,22 +98,28 @@ encoding fits.
 
 Server: `internal/mcp/server.go` (constructor + helpers); tools live
 in `tools_read.go` / `tools_mutate.go` / `tools_retranscribe.go` /
-`tools_vocab.go`. Twelve tools:
+`tools_vocab.go` / `tools_tags.go`. Fifteen tools:
 
 | Tool | Mutating? | Notes |
 |---|---|---|
 | `list_pending_notes` | no | basic CRUD |
-| `get_notes_in_range` | no | + `include_discarded` opt-in |
+| `get_notes_in_range` | no | date window + optional status filter |
 | `search_notes` | no | FTS5 + bm25 + 30-token snippet; Cyrillic terms stemmed (Snowball ru) + prefix-matched |
 | `get_note` | no | full raw_text |
 | `mark_analyzed` | yes | batch |
-| `discard_notes` | yes | batch, reversible |
-| `restore_note` | yes | only `discarded → pending` |
+| `delete_notes` | yes | batch, **permanent** — removes row + history + audio |
 | `retranscribe` | yes | requires audio retention; archives to `notes_history` |
 | `db_health` | no | `PRAGMA integrity_check` (+ optional `quick` mode) + counts |
 | `list_vocab` | no | current whisper vocabulary terms |
 | `add_vocab` | yes | batch add; Claude closes the transcription-quality loop |
 | `remove_vocab` | yes | single term; `clear` stays bot-only by design |
+| `tag_note` | yes | attach category tags (analysis-side overlay); normalized + deduped |
+| `untag_note` | yes | remove one tag |
+| `list_tags` | no | distinct tags + note counts, most-used first |
+| `notes_by_tag` | no | deterministic selection by tag (complements `search_notes`) |
+
+Every note object returned by a read tool carries its `tags` (batch-loaded
+via `attachTags`, no N+1).
 
 Every tool sets `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
 `OpenWorldHint` explicitly.

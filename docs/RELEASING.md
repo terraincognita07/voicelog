@@ -60,9 +60,9 @@ gate.
    bash scripts/smoke-mcp.sh
    ```
 
-   To exercise the mutating tools (`mark_analyzed` / `discard_notes` /
-   `restore_note`) without leaving side effects beyond one history
-   row, pass `--mutate` and `NOTE_ID=<id>` for a real seed note.
+   To exercise the mutating tools (`mark_analyzed` / `delete_notes`),
+   pass `--mutate` and `NOTE_ID=<id>` for a throwaway seed note —
+   `delete_notes` permanently removes it.
 5. **CHANGELOG accuracy.** Read `[Unreleased]` end-to-end. Anything
    shipped since the previous tag that is *user-visible* (env-var,
    MCP tool, bot UI, docs file moved) must be listed. Drop entries

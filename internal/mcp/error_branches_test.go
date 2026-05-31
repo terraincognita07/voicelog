@@ -42,36 +42,15 @@ func TestMarkAnalyzed_NonNumericIDIsRejected(t *testing.T) {
 	}
 }
 
-func TestDiscardNotes_EmptyIdsReturnsZero(t *testing.T) {
-	// Empty array is valid input; the underlying UPDATE matches 0 rows.
-	// updated must come back as 0, not be reported as an error.
+func TestDeleteNotes_EmptyIdsReturnsZero(t *testing.T) {
+	// Empty array is valid input; nothing is deleted. deleted must come
+	// back as 0, not be reported as an error.
 	f := newFixture(t)
-	tcr := callTool(t, f, "discard_notes", map[string]any{"ids": []any{}})
+	tcr := callTool(t, f, "delete_notes", map[string]any{"ids": []any{}})
 	var got map[string]int
 	decodePayload(t, tcr, &got)
-	if got["updated"] != 0 {
-		t.Errorf("updated: want 0, got %d", got["updated"])
-	}
-}
-
-// --- restore_note error branches ----------------------------------------
-
-func TestRestoreNote_MissingIDIsRejected(t *testing.T) {
-	// id is Required — omitting it must surface a validation message.
-	f := newFixture(t)
-	tcr := callTool(t, f, "restore_note", map[string]any{})
-	msg := expectToolError(t, tcr)
-	if msg == "" {
-		t.Errorf("error message must be non-empty")
-	}
-}
-
-func TestRestoreNote_UnknownIDIsErrNoteNotFound(t *testing.T) {
-	f := newFixture(t)
-	tcr := callTool(t, f, "restore_note", map[string]any{"id": float64(99999)})
-	msg := expectToolError(t, tcr)
-	if !strings.Contains(msg, "not found") {
-		t.Errorf("error should say not found: %q", msg)
+	if got["deleted"] != 0 {
+		t.Errorf("deleted: want 0, got %d", got["deleted"])
 	}
 }
 
@@ -102,53 +81,29 @@ func TestGetNotesInRange_BadToIsRejected(t *testing.T) {
 }
 
 func TestGetNotesInRange_StatusFilterExplicit(t *testing.T) {
-	// status="discarded" overrides the default exclusion. Seed one of
-	// each kind and confirm only the discarded note comes back.
+	// An explicit status filter narrows to just that status. Seed one
+	// pending and one analyzed, filter status="analyzed", expect only it.
 	f := newFixture(t)
 	now := time.Now()
 	seedNote(t, f.store, now, "pending one")
-	discardID := seedNote(t, f.store, now, "to be discarded")
-	if _, err := f.store.DiscardNotes(context.Background(), []int64{discardID}); err != nil {
-		t.Fatalf("discard: %v", err)
+	analyzedID := seedNote(t, f.store, now, "to be analyzed")
+	if _, err := f.store.MarkAnalyzed(context.Background(), []int64{analyzedID}); err != nil {
+		t.Fatalf("mark analyzed: %v", err)
 	}
 	from := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
 	to := now.Add(1 * time.Hour).UTC().Format(time.RFC3339)
 	tcr := callTool(t, f, "get_notes_in_range", map[string]any{
 		"from":   from,
 		"to":     to,
-		"status": "discarded",
+		"status": "analyzed",
 	})
 	var got []map[string]any
 	decodePayload(t, tcr, &got)
 	if len(got) != 1 {
-		t.Fatalf("want 1 discarded, got %d", len(got))
+		t.Fatalf("want 1 analyzed, got %d", len(got))
 	}
-	if int64(got[0]["id"].(float64)) != discardID {
-		t.Errorf("id: want %d, got %v", discardID, got[0]["id"])
-	}
-}
-
-func TestGetNotesInRange_IncludeDiscardedTrueShowsAll(t *testing.T) {
-	// include_discarded=true (without an explicit status filter) widens
-	// the result set to include discarded rows alongside pending/analyzed.
-	f := newFixture(t)
-	now := time.Now()
-	seedNote(t, f.store, now, "alive")
-	discardID := seedNote(t, f.store, now, "buried")
-	if _, err := f.store.DiscardNotes(context.Background(), []int64{discardID}); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-	from := now.Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	to := now.Add(1 * time.Hour).UTC().Format(time.RFC3339)
-	tcr := callTool(t, f, "get_notes_in_range", map[string]any{
-		"from":              from,
-		"to":                to,
-		"include_discarded": true,
-	})
-	var got []map[string]any
-	decodePayload(t, tcr, &got)
-	if len(got) != 2 {
-		t.Errorf("include_discarded=true must surface both rows; got %d", len(got))
+	if int64(got[0]["id"].(float64)) != analyzedID {
+		t.Errorf("id: want %d, got %v", analyzedID, got[0]["id"])
 	}
 }
 
@@ -174,24 +129,6 @@ func TestGetNotesInRange_LimitClampsResults(t *testing.T) {
 
 // --- search_notes alternate paths ---------------------------------------
 
-func TestSearchNotes_IncludeDiscardedTrue(t *testing.T) {
-	f := newFixture(t)
-	now := time.Now()
-	id := seedNote(t, f.store, now, "молоко purchase")
-	if _, err := f.store.DiscardNotes(context.Background(), []int64{id}); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-	tcr := callTool(t, f, "search_notes", map[string]any{
-		"query":             "молоко",
-		"include_discarded": true,
-	})
-	var got []map[string]any
-	decodePayload(t, tcr, &got)
-	if len(got) != 1 {
-		t.Errorf("include_discarded=true must show the hit; got %d", len(got))
-	}
-}
-
 func TestSearchNotes_EmptyHitsReturnsEmptyArray(t *testing.T) {
 	// A perfectly valid query with zero matches must return [] rather
 	// than an error — Claude relies on the empty-array signal.
@@ -209,7 +146,7 @@ func TestSearchNotes_EmptyHitsReturnsEmptyArray(t *testing.T) {
 func TestRetranscribe_NoteNotFound(t *testing.T) {
 	// With a non-nil whisper the handler advances past the "unavailable"
 	// short-circuit and into GetNote. An unknown id surfaces as
-	// "note N not found" — same wording as restore_note's branch.
+	// "note N not found".
 	deps := mcp.RetranscribeDeps{Whisper: &whisper.Client{}}
 	f := newFixtureWith(t, deps)
 	tcr := callTool(t, f, "retranscribe", map[string]any{"id": float64(99999)})

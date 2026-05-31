@@ -543,3 +543,29 @@ func insertWithTimestamp(t *testing.T, d *db.DB, when time.Time, text string) in
 	id, _ := res.LastInsertId()
 	return id
 }
+
+func TestDelete(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Relative path (post-F3 format) inside the dir is removed.
+	writeFile(t, filepath.Join(dir, "7.oga"), "opus payload")
+	Delete(dir, "7.oga", logger)
+	if _, err := os.Stat(filepath.Join(dir, "7.oga")); !os.IsNotExist(err) {
+		t.Errorf("file should be gone, stat err = %v", err)
+	}
+
+	// Missing file / empty stored path / empty dir are all no-ops (no panic).
+	Delete(dir, "does-not-exist.oga", logger)
+	Delete(dir, "", logger)
+	Delete("", "7.oga", logger)
+
+	// A path resolving OUTSIDE the managed dir is left untouched — the same
+	// traversal guard the janitor uses.
+	outside := filepath.Join(t.TempDir(), "keep.oga")
+	writeFile(t, outside, "do not delete")
+	Delete(dir, outside, logger) // absolute path → resolves outside dir
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("path outside managed dir must survive, stat err = %v", err)
+	}
+}

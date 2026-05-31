@@ -332,8 +332,8 @@ func (tb *Bot) handleVocabAddReply(c tele.Context, msg *tele.Message) error {
 }
 
 // saveTextNote stores a plain text message as a note (duration 0, no audio,
-// no confidence signals) and ships the same saved-reply + discard button a
-// voice note gets, so typed and spoken capture feel identical.
+// no confidence signals) and ships the same saved-reply (🗑 Delete / ✏️ Edit)
+// a voice note gets, so typed and spoken capture feel identical.
 func (tb *Bot) saveTextNote(c tele.Context, msg *tele.Message) error {
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
@@ -348,7 +348,7 @@ func (tb *Bot) saveTextNote(c tele.Context, msg *tele.Message) error {
 	pending, _ := tb.db.CountPending(ctx)
 	preview := previewText(text, savedPreviewLen)
 	truncated := len([]rune(strings.ReplaceAll(text, "\n", " "))) > savedPreviewLen
-	return c.Send(tb.msg.Recorded(id, 0, pending, preview, false), tb.discardMarkup(id, truncated))
+	return c.Send(tb.msg.Recorded(id, 0, pending, preview, false), tb.savedMarkup(id, truncated))
 }
 
 // Ensure db package is referenced (avoids unused import in fast-edit

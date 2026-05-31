@@ -13,9 +13,9 @@
 #
 # The script does NOT mutate state by default: list_pending_notes,
 # get_notes_in_range, search_notes, get_note, db_health. Mutating tools
-# (mark_analyzed, discard_notes, restore_note, retranscribe) require
-# --mutate to be passed AND a seeded note id in NOTE_ID — those touch
-# real rows.
+# (mark_analyzed, delete_notes, retranscribe) require --mutate to be
+# passed AND a seeded note id in NOTE_ID — those touch real rows
+# (delete_notes permanently removes the seed note).
 #
 # Exit codes:
 #   0 — every checked tool returned a JSON-RPC success envelope with the
@@ -175,7 +175,7 @@ tools_list_returns_known_tools() {
     body=$(printf '%s' "$body" | sed -n 's/^data: \?//p' | head -n1)
   fi
   for tool in list_pending_notes get_notes_in_range search_notes get_note \
-              mark_analyzed discard_notes restore_note retranscribe db_health; do
+              mark_analyzed delete_notes retranscribe db_health; do
     if ! printf '%s' "$body" | jq -e --arg t "$tool" '.result.tools | map(.name) | index($t)' >/dev/null; then
       echo "FAIL: tools/list missing $tool" >&2
       return 1
@@ -228,15 +228,11 @@ if [ "$MUTATE" = "--mutate" ]; then
       call_tool mark_analyzed '{\"ids\": [$NOTE_ID]}' &&
       expect_isError mark_analyzed false
     "
-    # Discarding + restoring round-trips the note's state so the smoke
-    # test leaves no side effect besides one extra history row.
-    run "discard_notes ($NOTE_ID)" bash -c "
-      call_tool discard_notes '{\"ids\": [$NOTE_ID]}' &&
-      expect_isError discard_notes false
-    "
-    run "restore_note ($NOTE_ID)" bash -c "
-      call_tool restore_note '{\"id\": $NOTE_ID}' &&
-      expect_isError restore_note false
+    # delete_notes permanently removes NOTE_ID — this DOES consume the seed
+    # note (there is no restore). Pass a throwaway id when running with --mutate.
+    run "delete_notes ($NOTE_ID)" bash -c "
+      call_tool delete_notes '{\"ids\": [$NOTE_ID]}' &&
+      expect_isError delete_notes false
     "
   fi
 else

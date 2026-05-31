@@ -18,7 +18,6 @@ import (
 	"github.com/terraincognita07/voicelog/internal/db"
 	"github.com/terraincognita07/voicelog/internal/db/migrations"
 	"github.com/terraincognita07/voicelog/internal/mcp"
-	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
 const testToken = "abcdefghijklmnopqrst"
@@ -345,57 +344,20 @@ func TestMarkAnalyzed(t *testing.T) {
 	}
 }
 
-func TestDiscardNotes(t *testing.T) {
+func TestDeleteNotes(t *testing.T) {
 	f := newFixture(t)
-	id := seedNote(t, f.store, time.Now(), "discard me")
+	id := seedNote(t, f.store, time.Now(), "delete me")
 
-	tcr := callTool(t, f, "discard_notes", map[string]any{
+	tcr := callTool(t, f, "delete_notes", map[string]any{
 		"ids": []any{id},
 	})
 	var got map[string]int
 	decodePayload(t, tcr, &got)
-	if got["updated"] != 1 {
-		t.Errorf("updated: want 1, got %d", got["updated"])
+	if got["deleted"] != 1 {
+		t.Errorf("deleted: want 1, got %d", got["deleted"])
 	}
-	n, _ := f.store.GetNote(context.Background(), id)
-	if string(n.Status) != "discarded" {
-		t.Errorf("status = %q", n.Status)
-	}
-}
-
-func TestRestoreNote_DiscardedToPending(t *testing.T) {
-	f := newFixture(t)
-	id := seedNote(t, f.store, time.Now(), "restore me")
-	if _, err := f.store.DiscardNotes(context.Background(), []int64{id}); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-
-	tcr := callTool(t, f, "restore_note", map[string]any{"id": float64(id)})
-	var got map[string]bool
-	decodePayload(t, tcr, &got)
-	if !got["restored"] {
-		t.Errorf("restored: want true, got false")
-	}
-	n, _ := f.store.GetNote(context.Background(), id)
-	if string(n.Status) != "pending" {
-		t.Errorf("status after restore: %q", n.Status)
-	}
-}
-
-func TestRestoreNote_AnalyzedNotRestorable(t *testing.T) {
-	f := newFixture(t)
-	id := seedNote(t, f.store, time.Now(), "analyzed note")
-	if _, err := f.store.MarkAnalyzed(context.Background(), []int64{id}); err != nil {
-		t.Fatalf("mark analyzed: %v", err)
-	}
-
-	tcr := callTool(t, f, "restore_note", map[string]any{"id": float64(id)})
-	var got map[string]bool
-	decodePayload(t, tcr, &got)
-	// analyzed → pending is not a permitted transition; restore returns
-	// {restored: false} rather than erroring.
-	if got["restored"] {
-		t.Errorf("restored: want false for analyzed note, got true")
+	if _, err := f.store.GetNote(context.Background(), id); err == nil {
+		t.Errorf("note should be gone after delete_notes")
 	}
 }
 
@@ -408,27 +370,6 @@ func TestRetranscribe_UnavailableWithoutWhisper(t *testing.T) {
 	msg := expectToolError(t, tcr)
 	if !strings.Contains(strings.ToLower(msg), "unavailable") {
 		t.Errorf("error should mention 'unavailable': %q", msg)
-	}
-}
-
-func TestRetranscribe_RefusesDiscarded(t *testing.T) {
-	// Wire a non-nil Whisper client so the "unavailable" branch
-	// doesn't short-circuit before the discard check. The client is
-	// never actually called — the discarded guard returns first.
-	deps := mcp.RetranscribeDeps{Whisper: &whisper.Client{}}
-	f := newFixtureWith(t, deps)
-	id := seedNote(t, f.store, time.Now(), "to be discarded")
-	if _, err := f.store.DiscardNotes(context.Background(), []int64{id}); err != nil {
-		t.Fatalf("discard: %v", err)
-	}
-
-	tcr := callTool(t, f, "retranscribe", map[string]any{"id": float64(id)})
-	msg := expectToolError(t, tcr)
-	if !strings.Contains(strings.ToLower(msg), "discarded") {
-		t.Errorf("error should mention 'discarded', got %q", msg)
-	}
-	if !strings.Contains(strings.ToLower(msg), "restore") {
-		t.Errorf("error should hint at restore_note, got %q", msg)
 	}
 }
 

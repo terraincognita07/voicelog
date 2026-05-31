@@ -1,6 +1,6 @@
 # MCP — tools and Claude.ai exposure
 
-The mcp container exposes 12 tools over JSON-RPC at `/mcp`, guarded by
+The mcp container exposes 15 tools over JSON-RPC at `/mcp`, guarded by
 a bearer token (`MCP_TOKEN`). It binds to `127.0.0.1:8081` on the
 host — Internet exposure is your reverse-proxy's job.
 
@@ -12,11 +12,10 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
 
 - **`list_pending_notes(limit?: int = 50)`** —
   last N notes with `status='pending'`, newest first
-- **`get_notes_in_range(from: ISO8601, to: ISO8601, status?: string, include_discarded?: bool = false, limit?: int = 500)`** —
-  date-window query, optional status filter (`pending|analyzed|discarded`).
-  Discarded notes are excluded by default; pass `include_discarded=true` or
-  `status="discarded"` to surface them. Hard cap 500 rows per response.
-- **`search_notes(query: string, limit?: int = 20, include_discarded?: bool = false)`** —
+- **`get_notes_in_range(from: ISO8601, to: ISO8601, status?: string, limit?: int = 500)`** —
+  date-window query, newest first, with an optional status filter
+  (`pending|analyzed`). Hard cap 500 rows per response.
+- **`search_notes(query: string, limit?: int = 20)`** —
   SQLite FTS5 MATCH. Supports bare words (AND), `"phrase"`, `term*`,
   `term1 OR term2`. Bare Cyrillic words are automatically stemmed and
   prefix-matched (Russian morphology) — searching `работа` also finds
@@ -24,25 +23,22 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
   rank (lower = better). Each hit
   includes a `snippet` field — ~30 tokens around the match with the
   matched term wrapped in `<<` / `>>` and elided context shown as `...`.
-  Discarded notes are filtered out by default; opt in via `include_discarded`.
 - **`get_note(id: int)`** —
   fetch one full note by id. Returns the note object or an error if the
   id is unknown. Every note returned by MCP carries `confidence_overall`,
   `confidence_min` (mean / worst whisper `avg_logprob` — closer to 0 is
   more confident; `null` if the note was created before the verbose-JSON
-  pipeline), and `suspect_hallucination` (bool — first whisper segment
-  exceeded the silence-probability threshold).
+  pipeline), `suspect_hallucination` (bool — first whisper segment
+  exceeded the silence-probability threshold), and `tags` (the note's
+  category labels, omitted when it has none).
 - **`mark_analyzed(ids: int[])`** —
-  flip status to `analyzed` for the given ids. Discarded notes are
-  not touched. Returns `{updated: N}`.
-- **`discard_notes(ids: int[])`** —
-  mark the given ids as discarded (batch parity with the bot's `/delete`).
-  Already-discarded rows are ignored. Returns `{updated: N}`. Reversible
-  via `restore_note`.
-- **`restore_note(id: int)`** —
-  flip a single discarded note back to `pending`. Returns
-  `{restored: bool}` — `true` if it was discarded and got restored,
-  `false` if it exists but was not in `discarded` state.
+  flip status to `analyzed` for the given ids. Only pending notes flip;
+  already-analyzed ids are ignored. Returns `{updated: N}`.
+- **`delete_notes(ids: int[])`** —
+  **permanently** delete the given ids — transcription, edit history, and
+  retained audio file are all removed. **Irreversible**: there is no
+  restore. Batch parity with the bot's `/delete`. Unknown ids are ignored.
+  Returns `{deleted: N}`.
 - **`db_health(quick?: bool = false)`** —
   runs SQLite `PRAGMA integrity_check` + `quick_check`, then reports
   `note_count` and `db_size_bytes`. Healthy DB: both checks return the
@@ -58,9 +54,7 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
   before the row is updated, so the change is reversible at the SQL
   level. Returns `{note_id, old_text, new_text, confidence_overall,
   confidence_min, suspect_hallucination}` so the caller can summarize
-  the diff. Discarded notes are refused — call `restore_note` first
-  if you really want to overwrite them. Requires the mcp container
-  to be wired with `WHISPER_URL`.
+  the diff. Requires the mcp container to be wired with `WHISPER_URL`.
 - **`list_vocab()`** —
   list the current whisper vocabulary terms (newest first). Returns
   `{terms: [...], count: N}`. Use before `add_vocab` to avoid duplicates.
@@ -73,6 +67,21 @@ token-in-URL pattern on `/t/<token>/mcp` (see [Claude.ai web setup](#claudeai-we
 - **`remove_vocab(term: string)`** —
   remove a single term (case-insensitive). Returns `{removed: bool}`.
   Wiping the whole vocabulary is intentionally bot-only (`/vocab clear`).
+- **`tag_note(id: int, tags: string[])`** —
+  attach category tags to a note. A tag labels a JUDGMENT that isn't in the
+  note's words (`#идея`, `#todo`, `#философия`) — tags complement full-text
+  search rather than duplicate it (don't tag `#работа` just because the note
+  says "работа"). Normalized (lowercased, a leading `#` dropped, ≤64 chars);
+  duplicates on a note are ignored. A typical pass adds 2-3. Returns `{added: N}`.
+- **`untag_note(id: int, tag: string)`** —
+  remove one tag from a note (normalized the same way). Returns `{removed: bool}`.
+- **`list_tags()`** —
+  every tag in use with its note count, most-used first. Returns
+  `[{tag, count}]`. Use it before tagging to reuse an existing label.
+- **`notes_by_tag(tag: string, limit?: int = 500)`** —
+  notes carrying the tag, newest first — the deterministic counterpart to
+  `search_notes`. `notes_by_tag("философия")` surfaces every note you tagged,
+  even ones that never say "философия". Returns the note objects (with `tags`).
 
 Tool schemas are visible via standard MCP `tools/list`.
 
@@ -90,12 +99,16 @@ Read / analyze:
   (Cyrillic terms are stemmed, so dictionary forms match inflected ones)
 - *"show my pending notes"*, *"what's in my queue?"* → `list_pending_notes`
 - *"show note 42 in full"* → `get_note`
+- *"what was I philosophizing about?"*, *"show my #идея notes"* → `notes_by_tag`
+- *"what tags am I using?"* → `list_tags`
 - *"check the database integrity"* → `db_health`
 
 Write (Claude will do these, but they change your journal):
 
 - *"mark 12 and 13 as analyzed"* → `mark_analyzed`
-- *"discard notes 5 and 6"* / *"restore note 7"* → `discard_notes` / `restore_note`
+- *"delete notes 5 and 6 for good"* → `delete_notes` (permanent — no undo)
+- *"tag my philosophical notes #философия"*, *"add #todo to note 8"* →
+  `tag_note`; *"remove #todo from note 8"* → `untag_note`
 - *"re-transcribe note 42"* → `retranscribe` (only if audio retention is on
   and the file hasn't aged out)
 - *"whisper keeps misspelling 'Иннокентий' — add it to the vocabulary"* →

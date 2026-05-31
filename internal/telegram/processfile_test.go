@@ -46,7 +46,7 @@ func wireTranscriber(tb *Bot, ft *fakeTranscriber) {
 //   - exactly one note is inserted, with the trimmed text
 //   - confidence fields are populated from the result's Aggregate
 //   - the user reply uses Recorded (not Duplicate / EmptyTrans / Disk-full)
-//   - the reply carries an inline-keyboard markup (the saved-reply discard btn)
+//   - the reply carries an inline-keyboard markup (the saved-reply delete btn)
 func TestProcessSource_HappyPathInsertsAndReplies(t *testing.T) {
 	tb := newTestBot(t)
 	ft := &fakeTranscriber{

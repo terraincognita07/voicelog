@@ -23,8 +23,9 @@ func TestLocalesAreComplete(t *testing.T) {
 				"EmptyVocab":         m.EmptyVocab,
 				"UsageDelete":        m.UsageDelete,
 				"BadID":              m.BadID,
-				"DiscardBtn":         m.DiscardBtn,
-				"RestoreBtn":         m.RestoreBtn,
+				"DeleteBtn":          m.DeleteBtn,
+				"DeleteYesBtn":       m.DeleteYesBtn,
+				"DeleteNoBtn":        m.DeleteNoBtn,
 				"EditBtn":            m.EditBtn,
 				"MenuPending":        m.MenuPending,
 				"MenuRecent":         m.MenuRecent,
@@ -39,16 +40,15 @@ func TestLocalesAreComplete(t *testing.T) {
 				"ClearAllBtn":        m.ClearAllBtn,
 				"ClearAllYesBtn":     m.ClearAllYesBtn,
 				"ClearAllNoBtn":      m.ClearAllNoBtn,
-				"GoDiscardedBtn":     m.GoDiscardedBtn,
 				"ShowMoreBtn":        m.ShowMoreBtn,
 				"FilterAllBtn":       m.FilterAllBtn,
 				"FilterPendingBtn":   m.FilterPendingBtn,
-				"FilterDiscardedBtn": m.FilterDiscardedBtn,
 				"FilterActiveMark":   m.FilterActiveMark,
 				"DayToday":           m.DayToday,
 				"DayYesterday":       m.DayYesterday,
 				"ErrFallback":        m.ErrFallback,
 				"Transcribing":       m.Transcribing,
+				"EditUsage":          m.EditUsage,
 			} {
 				if got == "" {
 					t.Errorf("%s is empty", label)
@@ -68,14 +68,11 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.NotFound == nil || m.NotFound(1) == "" {
 				t.Error("NotFound missing or returns empty")
 			}
-			if m.Discarded == nil || m.Discarded(1) == "" {
-				t.Error("Discarded missing or returns empty")
+			if m.Deleted == nil || m.Deleted(1) == "" {
+				t.Error("Deleted missing or returns empty")
 			}
-			if m.DiscardedReply == nil || m.DiscardedReply(1, "x") == "" || m.DiscardedReply(1, "") == "" {
-				t.Error("DiscardedReply missing or returns empty")
-			}
-			if m.RestoredReply == nil || m.RestoredReply(1, "x") == "" || m.RestoredReply(1, "") == "" {
-				t.Error("RestoredReply missing or returns empty")
+			if m.DeleteAsk == nil || m.DeleteAsk(1) == "" {
+				t.Error("DeleteAsk missing or returns empty")
 			}
 			// EditPrompt must contain the id as its only number so onText can
 			// recover it from a force-reply (see matchEditPrompt).
@@ -84,6 +81,9 @@ func TestLocalesAreComplete(t *testing.T) {
 			}
 			if m.EditUpdated == nil || m.EditUpdated(1, "x") == "" || m.EditUpdated(1, "") == "" {
 				t.Error("EditUpdated missing or returns empty")
+			}
+			if m.EditNotFound == nil || m.EditNotFound("x") == "" {
+				t.Error("EditNotFound missing or returns empty")
 			}
 			if m.VocabList == nil || m.VocabList(nil) == "" || m.VocabList([]string{"a"}) == "" {
 				t.Error("VocabList missing or returns empty")
@@ -115,13 +115,13 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.EmptyRecent == nil {
 				t.Error("EmptyRecent is nil")
 			} else {
-				for _, f := range []string{"", "pending", "discarded"} {
+				for _, f := range []string{"", "pending"} {
 					if m.EmptyRecent(f) == "" {
 						t.Errorf("EmptyRecent(%q) returned empty", f)
 					}
 				}
 			}
-			if m.Status == nil || m.Status("pending") == "" || m.Status("analyzed") == "" || m.Status("discarded") == "" {
+			if m.Status == nil || m.Status("pending") == "" || m.Status("analyzed") == "" {
 				t.Error("Status missing or returns empty for known status")
 			}
 			if m.DayHeader == nil || m.DayHeader("today", 5) == "" {
@@ -162,7 +162,7 @@ func TestLocalesAreComplete(t *testing.T) {
 			expectedErrLabels := []string{
 				"tmp dir", "download from telegram", "whisper", "insert note",
 				"list pending", "list recent", "refresh",
-				"discard", "restore", "clear", "mark discarded", "edit note",
+				"delete", "clear", "edit note",
 				"vocab list", "vocab add", "vocab del", "vocab clear", "vocab rm",
 			}
 			if m.Errors == nil {

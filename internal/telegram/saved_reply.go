@@ -12,19 +12,22 @@ import (
 	"github.com/terraincognita07/voicelog/internal/db"
 )
 
-// Saved-reply UX — the message bot sends after transcribing a voice note.
-// The reply ships with a one-button inline keyboard that toggles in place:
-//   pending state:   [🗑 Discard]   → on tap: discard + show preview + swap to [↩ Restore]
-//   discarded state: [↩ Restore]   → on tap: restore + show preview + swap to [🗑 Discard]
+// Saved-reply UX — the message the bot sends after capturing a note. The
+// reply ships with an inline keyboard:
 //
-// One message, two-way, no spam. The callback data is the bare note ID
-// (numeric, ≤20 bytes — well under Telegram's 64-byte limit).
+//	[🗑 Delete] [✏️ Edit]    (+ [📖 Show full] when the preview was clipped)
+//
+// 🗑 is a permanent, irreversible delete, so it asks first: the message
+// swaps to "Delete #N permanently?" with [✓ Yes, delete] [✗ Cancel].
+// Cancel restores the saved-reply; Yes erases the note row, its edit
+// history (ON DELETE CASCADE) and its retained audio file.
 
 var (
-	discardBtn      = tele.InlineButton{Unique: "discard"}       // saved-note reply
-	savedRestoreBtn = tele.InlineButton{Unique: "saved_restore"} // undo discard on saved-note reply
-	savedFullBtn    = tele.InlineButton{Unique: "saved_full"}    // expand preview to full text
-	editBtn         = tele.InlineButton{Unique: "edit_note"}     // open the force-reply edit prompt
+	deleteBtn    = tele.InlineButton{Unique: "delete"}     // 🗑 on a saved-note reply → confirm
+	deleteYesBtn = tele.InlineButton{Unique: "delete_yes"} // confirm the delete
+	deleteNoBtn  = tele.InlineButton{Unique: "delete_no"}  // cancel the delete
+	savedFullBtn = tele.InlineButton{Unique: "saved_full"} // expand preview to full text
+	editBtn      = tele.InlineButton{Unique: "edit_note"}  // open the force-reply edit prompt
 )
 
 // savedPreviewLen caps the inline preview shown under a saved-reply.
@@ -34,56 +37,31 @@ var (
 // renderer below — a rare edge for typical voice notes).
 const savedPreviewLen = 200
 
-// savedMarkup is the inline keyboard for a saved-note reply. The primary
-// row is one toggle button (🗑 Discard / ↩ Restore). If the transcription
-// was truncated for preview, a second row offers [📖 Show full].
-func (tb *Bot) savedMarkup(id int64, discarded, truncated bool) *tele.ReplyMarkup {
-	var primary tele.InlineButton
-	if discarded {
-		primary = savedRestoreBtn
-		primary.Text = tb.msg.RestoreBtn
-	} else {
-		primary = discardBtn
-		primary.Text = tb.msg.DiscardBtn
-	}
-	primary.Data = strconv.FormatInt(id, 10)
-	// The first row pairs the discard toggle with [✏️ Edit]. Editing is
-	// offered only while the note is live — a discarded note is the user's
-	// "forget this" signal, so we don't invite overwriting it (mirrors the
-	// MCP retranscribe refusal). Restoring first re-enables the edit button.
-	firstRow := []tele.InlineButton{primary}
-	if !discarded {
-		edit := editBtn
-		edit.Text = tb.msg.EditBtn
-		edit.Data = strconv.FormatInt(id, 10)
-		firstRow = append(firstRow, edit)
-	}
-	rows := [][]tele.InlineButton{firstRow}
+// savedMarkup is the inline keyboard for a saved-note reply: the
+// [🗑 Delete] [✏️ Edit] row, plus a [📖 Show full] row when the inline
+// preview was clipped.
+func (tb *Bot) savedMarkup(id int64, truncated bool) *tele.ReplyMarkup {
+	idStr := strconv.FormatInt(id, 10)
+	del := deleteBtn
+	del.Text = tb.msg.DeleteBtn
+	del.Data = idStr
+	edit := editBtn
+	edit.Text = tb.msg.EditBtn
+	edit.Data = idStr
+	rows := [][]tele.InlineButton{{del, edit}}
 	if truncated {
 		full := savedFullBtn
 		full.Text = tb.msg.ShowFullBtn
-		// Data encodes "id:discardedFlag" so the full-view callback can
-		// rebuild the markup with the correct primary button afterward.
-		flag := "0"
-		if discarded {
-			flag = "1"
-		}
-		full.Data = strconv.FormatInt(id, 10) + ":" + flag
+		full.Data = idStr
 		rows = append(rows, []tele.InlineButton{full})
 	}
 	return &tele.ReplyMarkup{InlineKeyboard: rows}
 }
 
-// discardMarkup is used by processFile to attach the initial saved-reply
-// keyboard. truncated is set when the inline preview was clipped.
-func (tb *Bot) discardMarkup(id int64, truncated bool) *tele.ReplyMarkup {
-	return tb.savedMarkup(id, false, truncated)
-}
-
-// cbDiscard handles [🗑 Discard] under a saved-note reply. Edits the
-// message in place: confirmation + preview of the discarded text, and
-// the button becomes [↩ Restore] for one-tap undo.
-func (tb *Bot) cbDiscard(c tele.Context) error {
+// cbDeleteAsk handles [🗑 Delete] under a saved-note reply. Because the
+// delete is irreversible it does not act immediately — it swaps the message
+// to a confirm prompt with [✓ Yes, delete] [✗ Cancel].
+func (tb *Bot) cbDeleteAsk(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
 		return nil
@@ -92,23 +70,21 @@ func (tb *Bot) cbDiscard(c tele.Context) error {
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := tb.db.MarkDiscarded(ctx, id); err != nil {
-		if errors.Is(err, db.ErrNoteNotFound) {
-			tb.tryEdit(c, tb.msg.NotFound(id))
-			return c.Respond()
-		}
-		return tb.errToast(c, "discard", err)
-	}
-	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	tb.tryEdit(c, tb.msg.DiscardedReply(id, preview), tb.savedMarkup(id, true, truncated))
+	idStr := strconv.FormatInt(id, 10)
+	yes := deleteYesBtn
+	yes.Text = tb.msg.DeleteYesBtn
+	yes.Data = idStr
+	no := deleteNoBtn
+	no.Text = tb.msg.DeleteNoBtn
+	no.Data = idStr
+	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
+	tb.tryEdit(c, tb.msg.DeleteAsk(id), kb)
 	return c.Respond()
 }
 
-// cbSavedRestore is the inverse of cbDiscard, attached to the [↩ Restore]
-// button rendered after a discard.
-func (tb *Bot) cbSavedRestore(c tele.Context) error {
+// cbDeleteYes performs the confirmed delete. The note row, its edit history
+// (ON DELETE CASCADE) and its retained audio file are removed for good.
+func (tb *Bot) cbDeleteYes(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
 		return nil
@@ -119,33 +95,51 @@ func (tb *Bot) cbSavedRestore(c tele.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := tb.db.RestoreNote(ctx, id); err != nil {
+	if err := tb.deleteNote(ctx, id); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
 			tb.tryEdit(c, tb.msg.NotFound(id))
 			return c.Respond()
 		}
-		return tb.errToast(c, "restore", err)
+		return tb.errToast(c, "delete", err)
 	}
+	tb.tryEdit(c, tb.msg.Deleted(id))
+	return c.Respond()
+}
+
+// cbDeleteNo cancels a pending delete and restores the saved-note reply
+// (preview + the 🗑/✏️ keyboard). The note was never touched.
+func (tb *Bot) cbDeleteNo(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	tb.tryEdit(c, tb.msg.RestoredReply(id, preview), tb.savedMarkup(id, false, truncated))
+	body := "📝 #" + strconv.FormatInt(id, 10)
+	if preview != "" {
+		body += "\n\n«" + preview + "»"
+	}
+	tb.tryEdit(c, body, tb.savedMarkup(id, truncated))
 	return c.Respond()
 }
 
 // cbSavedFull replaces the truncated preview with the full transcription.
-// Callback data: "id:discardedFlag". After expanding the [📖 Show full]
-// button is removed (no point offering "show full" again), but the
-// primary 🗑/↩ toggle remains.
+// After expanding, the [📖 Show full] button is removed (no point offering
+// it again), but the 🗑/✏️ row stays.
 func (tb *Bot) cbSavedFull(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
 		return nil
 	}
-	parts := strings.SplitN(strings.TrimSpace(cb.Data), ":", 2)
-	id, err := strconv.ParseInt(parts[0], 10, 64)
+	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
-	discarded := len(parts) == 2 && parts[1] == "1"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	n, err := tb.db.GetNote(ctx, id)
@@ -159,16 +153,8 @@ func (tb *Bot) cbSavedFull(c tele.Context) error {
 	// Hard-cap the rendered body so we stay safely under Telegram's
 	// 4096-byte message limit even with a header line.
 	full := previewText(n.RawText, 3500)
-	var body string
-	if discarded {
-		body = tb.msg.DiscardedReply(id, full)
-	} else {
-		// In the not-yet-discarded case the header is "✓ saved" — we
-		// reconstruct a compact version (no need to re-show duration /
-		// pending count; they're stale anyway).
-		body = "📖 #" + strconv.FormatInt(id, 10) + "\n\n«" + full + "»"
-	}
-	tb.tryEdit(c, body, tb.savedMarkup(id, discarded, false))
+	body := "📖 #" + strconv.FormatInt(id, 10) + "\n\n«" + full + "»"
+	tb.tryEdit(c, body, tb.savedMarkup(id, false))
 	return c.Respond()
 }
 
@@ -229,26 +215,66 @@ func firstInt(s string) (int64, bool) {
 	return 0, false
 }
 
-// applyNoteEdit replaces a note's text with newText, archiving the previous
-// text to notes_history (reversible at the SQL level). Empty newText is a
-// no-op (returns ErrNoteNotFound's sibling: nil reply, handled by caller).
-// Returns the inline preview + whether it was truncated so the caller can
-// rebuild the saved-reply markup.
-func (tb *Bot) applyNoteEdit(c tele.Context, id int64, newText string) error {
-	text := strings.TrimSpace(newText)
-	if text == "" {
+// splitEdit detects a "find → replace" instruction in an edit reply. It
+// accepts a space-padded arrow / ASCII separator — so an arrow buried in a
+// full-text replacement ("x -> y") doesn't trip it — plus the bare Unicode
+// arrow (rare in journal prose). Returns (find, replacement, true) on a hit.
+func splitEdit(reply string) (find, repl string, ok bool) {
+	for _, sep := range []string{" → ", " -> ", " => ", "→"} {
+		if i := strings.Index(reply, sep); i >= 0 {
+			return strings.TrimSpace(reply[:i]), strings.TrimSpace(reply[i+len(sep):]), true
+		}
+	}
+	return "", "", false
+}
+
+// applyNoteEdit applies an edit reply to a note — two shapes behind one
+// ✏️ button:
+//   - "old → new"  → replace every occurrence of `old` with `new` in the
+//     current text (case-sensitive). Fixes one whisper-misheard word without
+//     retyping the whole transcript.
+//   - anything else → replace the whole text (the original behavior).
+//
+// Either way the previous text is archived to notes_history (recoverable at
+// the SQL level). An edit that can't apply (the `find` isn't present, or the
+// result would empty the note) reports back and changes nothing.
+func (tb *Bot) applyNoteEdit(c tele.Context, id int64, reply string) error {
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := tb.db.ArchiveAndUpdateText(ctx, id, text, "", db.NoteMeta{}); err != nil {
+
+	newText := reply // default: full-text replacement
+	if find, repl, isReplace := splitEdit(reply); isReplace {
+		if find == "" {
+			return c.Send(tb.msg.EditUsage)
+		}
+		n, err := tb.db.GetNote(ctx, id)
+		if err != nil {
+			if errors.Is(err, db.ErrNoteNotFound) {
+				return c.Send(tb.msg.NotFound(id))
+			}
+			return tb.errReply(c, "edit note", err)
+		}
+		if !strings.Contains(n.RawText, find) {
+			return c.Send(tb.msg.EditNotFound(find))
+		}
+		newText = strings.ReplaceAll(n.RawText, find, repl)
+	}
+	if strings.TrimSpace(newText) == "" {
+		return c.Send(tb.msg.EditUsage)
+	}
+
+	if _, err := tb.db.ArchiveAndUpdateText(ctx, id, newText, "", db.NoteMeta{}); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
 			return c.Send(tb.msg.NotFound(id))
 		}
 		return tb.errReply(c, "edit note", err)
 	}
 	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	return c.Send(tb.msg.EditUpdated(id, preview), tb.savedMarkup(id, false, truncated))
+	return c.Send(tb.msg.EditUpdated(id, preview), tb.savedMarkup(id, truncated))
 }
 
 // notePreviewAndTruncated returns the truncated preview AND whether

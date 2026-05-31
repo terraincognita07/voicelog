@@ -12,9 +12,8 @@ import (
 type Status string
 
 const (
-	StatusPending   Status = "pending"
-	StatusAnalyzed  Status = "analyzed"
-	StatusDiscarded Status = "discarded"
+	StatusPending  Status = "pending"
+	StatusAnalyzed Status = "analyzed"
 )
 
 type Note struct {
@@ -228,12 +227,10 @@ func (db *DB) ListRecentByStatus(ctx context.Context, status string, limit int) 
 		LIMIT ?`, status, limit)
 }
 
-// GetNotesInRange returns notes whose created_at falls in [from, to). If
-// status is non-empty, results are filtered by status. If status is empty
-// AND includeDiscarded is false, discarded notes are excluded — matches
-// the user's "forget this" intent. limit ≤ 0 or > MaxNotesInRange is
-// clamped to MaxNotesInRange.
-func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status string, limit int, includeDiscarded bool) ([]Note, error) {
+// GetNotesInRange returns notes whose created_at falls in [from, to),
+// newest first. A non-empty status narrows the result to that status.
+// limit ≤ 0 or > MaxNotesInRange is clamped to MaxNotesInRange.
+func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status string, limit int) ([]Note, error) {
 	if limit <= 0 || limit > MaxNotesInRange {
 		limit = MaxNotesInRange
 	}
@@ -246,115 +243,124 @@ func (db *DB) GetNotesInRange(ctx context.Context, from, to time.Time, status st
 			ORDER BY created_at DESC, id DESC
 			LIMIT ?`, from.Unix(), to.Unix(), status, limit)
 	}
-	if includeDiscarded {
-		return queryNotes(ctx, db, `
-			SELECT id, created_at, raw_text, duration_sec, audio_path, status,
-			       confidence_overall, confidence_min, suspect_hallucination
-			FROM notes
-			WHERE created_at >= ? AND created_at < ?
-			ORDER BY created_at DESC, id DESC
-			LIMIT ?`, from.Unix(), to.Unix(), limit)
-	}
 	return queryNotes(ctx, db, `
 		SELECT id, created_at, raw_text, duration_sec, audio_path, status,
 		       confidence_overall, confidence_min, suspect_hallucination
 		FROM notes
-		WHERE created_at >= ? AND created_at < ? AND status != 'discarded'
+		WHERE created_at >= ? AND created_at < ?
 		ORDER BY created_at DESC, id DESC
 		LIMIT ?`, from.Unix(), to.Unix(), limit)
 }
 
-// MarkDiscarded flips a single note to discarded. Returns ErrNoteNotFound
-// if the id is unknown OR was already discarded (idempotent caller-side
-// check happens at the SQL level via `status != 'discarded'`).
-func (db *DB) MarkDiscarded(ctx context.Context, id int64) error {
-	res, err := db.ExecContext(ctx,
-		`UPDATE notes SET status = 'discarded' WHERE id = ? AND status != 'discarded'`, id)
+// DeleteNote permanently removes a note and returns its retained audio
+// path (empty when none) so the caller can delete the on-disk file. The
+// FTS5 AFTER DELETE trigger drops the search-index entry and the
+// notes_history ON DELETE CASCADE FK clears the edit history in the same
+// statement. Returns ErrNoteNotFound if the id is unknown. IRREVERSIBLE —
+// there is no restore path.
+func (db *DB) DeleteNote(ctx context.Context, id int64) (string, error) {
+	var audioPath sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT audio_path FROM notes WHERE id = ?`, id).Scan(&audioPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNoteNotFound
+	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNoteNotFound
+	res, err := db.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)
+	if err != nil {
+		return "", err
 	}
-	return nil
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Lost a race with a concurrent delete of the same id.
+		return "", ErrNoteNotFound
+	}
+	return audioPath.String, nil
 }
 
-// DiscardNotes marks multiple notes as discarded. Already-discarded rows are
-// not double-counted. Returns the number of rows actually flipped.
-func (db *DB) DiscardNotes(ctx context.Context, ids []int64) (int, error) {
+// DeleteNotes permanently removes the given ids in one statement. Returns
+// the retained audio paths of the deleted rows (for on-disk cleanup) and
+// the number of rows actually removed. Unknown ids are silently skipped.
+func (db *DB) DeleteNotes(ctx context.Context, ids []int64) ([]string, int, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, 0, nil
 	}
-	// placeholders = "?,?,?" built from len(ids) — no user input
-	// is interpolated into the SQL. Values go through ExecContext's
-	// args... so SQLite binds them parameterized.
+	// placeholders = "?,?,?" built from len(ids) — no user input is
+	// interpolated into the SQL. Values go through args... so SQLite binds
+	// them parameterized.
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]
-	q := fmt.Sprintf(`UPDATE notes SET status = 'discarded' WHERE status != 'discarded' AND id IN (%s)`, placeholders) // nosemgrep
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
-	res, err := db.ExecContext(ctx, q, args...)
+	paths, err := collectAudioPaths(ctx, db,
+		fmt.Sprintf(`SELECT audio_path FROM notes WHERE audio_path IS NOT NULL AND id IN (%s)`, placeholders), // nosemgrep
+		args)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
+	}
+	res, err := db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM notes WHERE id IN (%s)`, placeholders), args...) // nosemgrep
+	if err != nil {
+		return nil, 0, err
 	}
 	n, _ := res.RowsAffected()
-	return int(n), nil
+	return paths, int(n), nil
 }
 
-// DiscardAllPending flips every pending note to discarded in one statement.
-// Returns the number of rows actually changed (0 if no pending exists).
-// Idempotent.
-func (db *DB) DiscardAllPending(ctx context.Context) (int, error) {
-	res, err := db.ExecContext(ctx,
-		`UPDATE notes SET status = 'discarded' WHERE status = 'pending'`)
+// DeleteAllPending permanently removes every pending note in one statement.
+// Returns the retained audio paths of the deleted rows and the count
+// removed (0 if no pending exists).
+func (db *DB) DeleteAllPending(ctx context.Context) ([]string, int, error) {
+	paths, err := collectAudioPaths(ctx, db,
+		`SELECT audio_path FROM notes WHERE audio_path IS NOT NULL AND status = 'pending'`, nil)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
+	}
+	res, err := db.ExecContext(ctx, `DELETE FROM notes WHERE status = 'pending'`)
+	if err != nil {
+		return nil, 0, err
 	}
 	n, _ := res.RowsAffected()
-	return int(n), nil
+	return paths, int(n), nil
 }
 
-// RestoreNote flips a discarded note back to pending. Returns (true, nil) if
-// the note was discarded and got restored; (false, nil) if it exists but was
-// not in discarded state; ErrNoteNotFound if the id is unknown.
-func (db *DB) RestoreNote(ctx context.Context, id int64) (bool, error) {
-	res, err := db.ExecContext(ctx,
-		`UPDATE notes SET status = 'pending' WHERE id = ? AND status = 'discarded'`, id)
+// collectAudioPaths runs a `SELECT audio_path ...` query and returns the
+// non-empty paths. Shared by the batch delete helpers so they can hand the
+// caller a list of files to remove from disk.
+func collectAudioPaths(ctx context.Context, db *DB, query string, args []any) ([]string, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return true, nil
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p sql.NullString
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		if p.Valid && p.String != "" {
+			paths = append(paths, p.String)
+		}
 	}
-	// Distinguish "exists but not discarded" from "doesn't exist at all".
-	var dummy int64
-	err = db.QueryRowContext(ctx, `SELECT id FROM notes WHERE id = ?`, id).Scan(&dummy)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, ErrNoteNotFound
-	}
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return paths, rows.Err()
 }
 
 // MarkAnalyzed flips `pending → analyzed` for the given ids. Already-
-// analyzed and discarded rows are left alone and not counted. Returns
-// the number of rows actually flipped.
+// analyzed (or otherwise non-pending) rows are left alone and not counted.
+// Returns the number of rows actually flipped.
 //
-// The narrow `status = 'pending'` filter (rather than the looser
-// `status != 'discarded'`) is what makes this call idempotent under
-// callback-storm conditions: a 50× flood of identical taps reports
+// The narrow `status = 'pending'` filter is what makes this call idempotent
+// under callback-storm conditions: a 50× flood of identical taps reports
 // 1 + 0 + 0 + ... instead of 1 + 1 + 1 + ... because subsequent calls
 // no longer match the WHERE clause. See TestMarkAnalyzed_CallbackFlood.
 func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	// Same batch-IN pattern as DiscardNotes: placeholders is built
+	// Same batch-IN pattern as DeleteNotes: placeholders is built
 	// from len(ids), values go through ExecContext args parameterized.
 	placeholders := strings.Repeat("?,", len(ids))
 	placeholders = placeholders[:len(placeholders)-1]

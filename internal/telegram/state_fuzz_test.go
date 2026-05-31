@@ -54,9 +54,9 @@ func FuzzParseRecentState(f *testing.F) {
 		if got.Limit < 1 {
 			t.Errorf("Limit must be >= 1 after parse; got %d for %q", got.Limit, in)
 		}
-		// Filter invariant: only "" / "pending" / "discarded" allowed.
+		// Filter invariant: only "" / "pending" allowed.
 		switch got.Filter {
-		case "", "pending", "discarded":
+		case "", "pending":
 		default:
 			t.Errorf("Filter must be whitelisted; got %q for %q", got.Filter, in)
 		}
@@ -101,7 +101,7 @@ func FuzzParseRecentStateWithID(f *testing.F) {
 			t.Errorf("Limit must be >= 1 after parse; got %d for %q", got.Limit, in)
 		}
 		switch got.Filter {
-		case "", "pending", "discarded":
+		case "", "pending":
 		default:
 			t.Errorf("Filter must be whitelisted; got %q for %q", got.Filter, in)
 		}
@@ -159,7 +159,7 @@ func FuzzValidRecentFilter(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in string) {
 		got := validRecentFilter(in)
 		switch got {
-		case "", "pending", "discarded":
+		case "", "pending":
 		default:
 			t.Errorf("validRecentFilter(%q) = %q, must be whitelist or empty", in, got)
 		}

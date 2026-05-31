@@ -9,7 +9,7 @@ import (
 
 // TestSaveTextNote_InsertsAndReplies covers typed-note capture: a plain text
 // message becomes a note (duration 0, no audio) and the user gets the same
-// saved-reply + discard markup a voice note produces.
+// saved-reply + delete markup a voice note produces.
 func TestSaveTextNote_InsertsAndReplies(t *testing.T) {
 	tb := newTestBot(t)
 	fc := &fakeCtx{message: &tele.Message{Text: "  купить молоко завтра  "}}
@@ -37,7 +37,7 @@ func TestSaveTextNote_InsertsAndReplies(t *testing.T) {
 		t.Fatal("expected a saved-reply Send")
 	}
 	if len(sent.Opts) == 0 {
-		t.Fatal("saved-reply should carry the discard inline markup")
+		t.Fatal("saved-reply should carry the delete inline markup")
 	}
 	if _, isMarkup := sent.Opts[0].(*tele.ReplyMarkup); !isMarkup {
 		t.Fatalf("expected *tele.ReplyMarkup option, got %T", sent.Opts[0])

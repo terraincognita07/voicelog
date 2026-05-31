@@ -85,6 +85,37 @@ func Resolve(audioDir, storedPath string) string {
 	return filepath.Join(audioDir, storedPath)
 }
 
+// Delete removes the on-disk file backing a single notes.audio_path value
+// (relative or legacy-absolute) when a note is permanently deleted.
+//
+// Best-effort by design: a missing file is not an error, and any real
+// failure is logged at Warn rather than returned — deleting a note must
+// never be blocked by a stuck file (the startup orphan scan will surface
+// anything left behind). Paths that resolve outside audioDir are skipped,
+// the same traversal guard the janitor uses, so a legacy absolute path that
+// points under a previous AUDIO_DIR is left untouched.
+//
+// No-op when retention is off (audioDir == "") or the note had no audio.
+func Delete(audioDir, stored string, logger *slog.Logger) {
+	if stored == "" || audioDir == "" {
+		return
+	}
+	dirAbs, err := filepath.Abs(audioDir)
+	if err != nil {
+		logger.Warn("audio delete: bad dir", "dir", audioDir, "err", err)
+		return
+	}
+	resolved := Resolve(dirAbs, stored)
+	if !pathInside(dirAbs, resolved) {
+		logger.Warn("audio delete: skipping path outside managed dir",
+			"stored", stored, "resolved", resolved)
+		return
+	}
+	if err := os.Remove(resolved); err != nil && !errors.Is(err, os.ErrNotExist) {
+		logger.Warn("audio delete: remove failed", "path", resolved, "err", err)
+	}
+}
+
 // RelativizeLegacyPaths is a one-shot startup pass that rewrites legacy
 // absolute audio_path values to the relative basename format, but only
 // where the absolute path resolves under the current audioDir. Rows

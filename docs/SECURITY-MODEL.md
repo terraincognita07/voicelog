@@ -47,7 +47,7 @@ deployment. Specifically:
 - **No MCP rate-limit.** A leaked `MCP_TOKEN` gives full read+mutate access
   with no per-IP / per-second throttle. Rotate aggressively if you screen-
   share, paste it into a chat, or commit a config snippet by accident.
-- **No audit log.** `get_note`, `search_notes`, `discard_notes` etc. don't
+- **No audit log.** `get_note`, `search_notes`, `delete_notes` etc. don't
   record who accessed what. If you need "who read note #42 in the last
   30 days?" — there's no answer to give. Fine for personal use, not for
   compliance.

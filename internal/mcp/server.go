@@ -5,12 +5,15 @@
 //
 //	tools_read.go         — list_pending_notes / get_notes_in_range /
 //	                        search_notes / get_note / db_health
-//	tools_mutate.go       — mark_analyzed / discard_notes / restore_note
+//	tools_mutate.go       — mark_analyzed / delete_notes
+//	tools_vocab.go        — list_vocab / add_vocab / remove_vocab
+//	tools_tags.go         — tag_note / untag_note / list_tags / notes_by_tag
 //	tools_retranscribe.go — retranscribe (+ RetranscribeDeps)
 //	auth.go               — BearerAuth wrapper used by cmd/mcp
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -24,7 +27,7 @@ import (
 
 const (
 	serverName    = "voicelog"
-	serverVersion = "0.3.0"
+	serverVersion = "0.4.0"
 )
 
 // mcpNote is the wire shape every voicelog tool returns. Mirrors the
@@ -41,6 +44,7 @@ type mcpNote struct {
 	ConfidenceOverall    *float64 `json:"confidence_overall,omitempty"` // mean avg_logprob; nil = unknown
 	ConfidenceMin        *float64 `json:"confidence_min,omitempty"`     // worst segment avg_logprob
 	SuspectHallucination bool     `json:"suspect_hallucination,omitempty"`
+	Tags                 []string `json:"tags,omitempty"` // category labels (analysis-side overlay)
 }
 
 func toMCP(n db.Note) mcpNote {
@@ -84,16 +88,21 @@ func NewServer(store *db.DB, deps RetranscribeDeps, logger *slog.Logger) *server
 		registerSearch,
 		registerGetNote,
 		registerMarkAnalyzed,
-		registerDiscardNotes,
-		registerRestoreNote,
 		registerDBHealth,
 		registerListVocab,
 		registerAddVocab,
 		registerRemoveVocab,
+		registerTagNote,
+		registerUntagNote,
+		registerListTags,
+		registerNotesByTag,
 	} {
 		register(s, store, logger)
 	}
-	registerRetranscribe(s, store, deps, logger) // distinct signature — keep outside the table
+	// delete_notes and retranscribe take extra deps (audio dir / whisper),
+	// so they live outside the (store, logger) registrar table.
+	registerDeleteNotes(s, store, deps.AudioDir, logger)
+	registerRetranscribe(s, store, deps, logger)
 
 	return s
 }
@@ -127,6 +136,29 @@ func toInt64Slice(v any) ([]int64, error) {
 		}
 	}
 	return out, nil
+}
+
+// attachTags batch-loads tags for the given mcpNotes and fills their Tags
+// field — one query for the whole page, no N+1. Best-effort: the caller logs
+// and proceeds on error, since tags are an enrichment, not the payload.
+func attachTags(ctx context.Context, store *db.DB, notes []mcpNote) error {
+	if len(notes) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(notes))
+	for i, n := range notes {
+		ids[i] = n.ID
+	}
+	tagMap, err := store.TagsForNotes(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range notes {
+		if t := tagMap[notes[i].ID]; len(t) > 0 {
+			notes[i].Tags = t
+		}
+	}
+	return nil
 }
 
 // jsonResult marshals v and wraps it in an MCP text-content result.

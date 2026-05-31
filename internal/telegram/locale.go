@@ -41,19 +41,21 @@ type messages struct {
 	UsageDelete        string
 	BadID              string
 	NotFound           func(id int64) string
-	Discarded          func(id int64) string
+	Deleted            func(id int64) string // "🗑 #N permanently deleted."
+	DeleteAsk          func(id int64) string // confirm prompt before an irreversible delete
 	Errors             map[string]string
 	ErrFallback        string
-	DiscardBtn         string
-	RestoreBtn         string
+	DeleteBtn          string                                // [🗑 Delete] on a saved-note reply / list row
+	DeleteYesBtn       string                                // confirm an irreversible delete
+	DeleteNoBtn        string                                // cancel a delete
 	ShowFullBtn        string                                // [📖 Show full] when preview was truncated
 	EditBtn            string                                // [✏️ Edit] on a saved-note reply
 	EditPrompt         func(id int64) string                 // force-reply prompt; MUST contain the id as its only number
 	EditUpdated        func(id int64, preview string) string // confirmation after the text is replaced
-	DiscardedReply     func(id int64, preview string) string
-	RestoredReply      func(id int64, preview string) string
-	Status             func(s string) string // localize "pending"/"analyzed"/"discarded"
-	Transcribing       string                // "transcribing..." flash before result
+	EditNotFound       func(find string) string              // find→replace: the "find" text wasn't in the note
+	EditUsage          string                                // edit reply didn't parse / would empty the note
+	Status             func(s string) string                 // localize "pending"/"analyzed"
+	Transcribing       string                                // "transcribing..." flash before result
 	Commands           []commandHint
 	MenuPending        string
 	MenuRecent         string
@@ -75,12 +77,10 @@ type messages struct {
 	VocabSkippedSuffix func(n int) string // " (skipped N too long)" — empty when n=0
 	VocabClearFallback string             // text-mode hint when user typed "/vocab clear" without confirm
 
-	ShowMoreBtn        string
-	FilterAllBtn       string
-	FilterPendingBtn   string
-	FilterDiscardedBtn string
-	FilterActiveMark   string // prefix added to the currently active chip
-	GoDiscardedBtn     string // jump to /recent with discarded filter (for empty lists)
+	ShowMoreBtn      string
+	FilterAllBtn     string
+	FilterPendingBtn string
+	FilterActiveMark string // prefix added to the currently active chip
 
 	ClearAllBtn    string
 	ClearAllAsk    func(n int) string
@@ -108,11 +108,11 @@ var locales = map[string]messages{
 			"   📋 Pending — fresh notes you haven't filed yet\n" +
 			"   🕘 Recent — last 10 notes, filterable by status\n" +
 			"   📒 Vocab — teach whisper names, jargon, rare terms\n" +
-			"3. Under every saved-note reply: 🗑 to discard, ↩ to undo.\n" +
-			"4. In lists, each note has a 🗑 / ↩ button. Tap to flip status.\n\n" +
+			"3. Under every saved-note reply: 🗑 to delete (asks first), ✏️ to fix the text.\n" +
+			"4. In lists, tap 🗑 on a note to delete it (asks to confirm).\n\n" +
 			"Power-user shortcuts (slash commands):\n" +
 			"/pending /recent — open lists directly\n" +
-			"/delete <id> — discard a note by id\n" +
+			"/delete <id> — permanently delete a note by id\n" +
 			"/vocab add <term> [<term>...] — batch add to vocabulary\n" +
 			"/vocab del <term> — remove one term\n" +
 			"/vocab clear confirm — wipe the vocabulary",
@@ -141,8 +141,6 @@ var locales = map[string]messages{
 			switch filter {
 			case "pending":
 				return "No pending notes in the recent window."
-			case "discarded":
-				return "Nothing discarded recently."
 			default:
 				return "No notes yet. Record a voice message to get started."
 			}
@@ -151,10 +149,13 @@ var locales = map[string]messages{
 		UsageDelete: "Use /delete <id>, or tap 🗑 in /recent or /pending.",
 		BadID:       "ID must be a number.",
 		NotFound: func(id int64) string {
-			return fmt.Sprintf("Note #%d not found (or already discarded).", id)
+			return fmt.Sprintf("Note #%d not found.", id)
 		},
-		Discarded: func(id int64) string {
-			return fmt.Sprintf("🗑 Note #%d discarded.", id)
+		Deleted: func(id int64) string {
+			return fmt.Sprintf("🗑 Note #%d permanently deleted.", id)
+		},
+		DeleteAsk: func(id int64) string {
+			return fmt.Sprintf("🗑 Delete note #%d permanently? This can't be undone.", id)
 		},
 		Errors: map[string]string{
 			"tmp dir":                "Couldn't prepare temporary storage.",
@@ -164,10 +165,8 @@ var locales = map[string]messages{
 			"list pending":           "Couldn't load the pending list.",
 			"list recent":            "Couldn't load the recent list.",
 			"refresh":                "Couldn't refresh the view.",
-			"discard":                "Couldn't discard the note.",
-			"restore":                "Couldn't restore the note.",
+			"delete":                 "Couldn't delete the note.",
 			"clear":                  "Couldn't clear pending notes.",
-			"mark discarded":         "Couldn't discard the note.",
 			"edit note":              "Couldn't update the note text.",
 			"vocab list":             "Couldn't load the vocabulary.",
 			"vocab add":              "Couldn't add to vocabulary.",
@@ -182,18 +181,17 @@ var locales = map[string]messages{
 				return "pending"
 			case "analyzed":
 				return "analyzed"
-			case "discarded":
-				return "discarded"
 			}
 			return s
 		},
 		Transcribing: "🎙 transcribing…",
-		DiscardBtn:   "🗑 Discard",
-		RestoreBtn:   "↩ Restore",
+		DeleteBtn:    "🗑 Delete",
+		DeleteYesBtn: "✓ Yes, delete",
+		DeleteNoBtn:  "✗ Cancel",
 		ShowFullBtn:  "📖 Show full",
 		EditBtn:      "✏️ Edit",
 		EditPrompt: func(id int64) string {
-			return fmt.Sprintf("✏️ Note #%d — reply to this message with the corrected text.", id)
+			return fmt.Sprintf("✏️ Note #%d — reply with the full corrected text, or just a fix as «old → new».", id)
 		},
 		EditUpdated: func(id int64, preview string) string {
 			head := fmt.Sprintf("✏️ Note #%d updated. The previous text is archived.", id)
@@ -202,25 +200,15 @@ var locales = map[string]messages{
 			}
 			return head + "\n\n«" + preview + "»"
 		},
-		DiscardedReply: func(id int64, preview string) string {
-			head := fmt.Sprintf("🗑 Note #%d discarded.", id)
-			if preview == "" {
-				return head
-			}
-			return head + "\n\n«" + preview + "»"
+		EditNotFound: func(find string) string {
+			return fmt.Sprintf("🔍 «%s» not found in the note — nothing changed.", find)
 		},
-		RestoredReply: func(id int64, preview string) string {
-			head := fmt.Sprintf("↩ Note #%d restored to pending.", id)
-			if preview == "" {
-				return head
-			}
-			return head + "\n\n«" + preview + "»"
-		},
+		EditUsage: "Send the full corrected text, or a replacement like «old → new».",
 		Commands: []commandHint{
 			{"pending", "last 20 pending notes"},
 			{"recent", "last 10 notes (any status)"},
 			{"vocab", "manage whisper vocabulary"},
-			{"delete", "mark a note as discarded"},
+			{"delete", "delete a note by id"},
 			{"help", "show commands"},
 		},
 		MenuPending: "📋 Pending",
@@ -278,20 +266,18 @@ var locales = map[string]messages{
 		},
 		VocabClearFallback: "Text fallback: /vocab clear confirm",
 
-		ShowMoreBtn:        "⤵ Show more",
-		FilterAllBtn:       "All",
-		FilterPendingBtn:   "Pending",
-		FilterDiscardedBtn: "Discarded",
-		FilterActiveMark:   "• ",
-		GoDiscardedBtn:     "🕘 Show discarded",
+		ShowMoreBtn:      "⤵ Show more",
+		FilterAllBtn:     "All",
+		FilterPendingBtn: "Pending",
+		FilterActiveMark: "• ",
 
-		ClearAllBtn: "🗑 Clear all",
+		ClearAllBtn: "🗑 Delete all",
 		ClearAllAsk: func(n int) string {
-			return fmt.Sprintf("Discard all %d pending notes?\nReversible per-note from the [Discarded] filter.", n)
+			return fmt.Sprintf("Delete all %d pending notes permanently? This can't be undone.", n)
 		},
-		ClearAllYesBtn: "✓ Yes, discard all",
+		ClearAllYesBtn: "✓ Yes, delete all",
 		ClearAllNoBtn:  "✗ Cancel",
-		ClearAllDone:   func(n int) string { return fmt.Sprintf("✓ discarded %d pending notes", n) },
+		ClearAllDone:   func(n int) string { return fmt.Sprintf("🗑 deleted %d pending notes", n) },
 
 		DayToday:     "today",
 		DayYesterday: "yesterday",
@@ -311,11 +297,11 @@ var locales = map[string]messages{
 			"   📋 Необработанные — свежие заметки, ещё не разобраны\n" +
 			"   🕘 Последние — последние 10, с фильтром по статусу\n" +
 			"   📒 Словарь — научи whisper именам, жаргону, редким терминам\n" +
-			"3. Под каждой «✓ сохранено» — 🗑 чтобы отбросить, ↩ чтобы вернуть.\n" +
-			"4. В списках у каждой заметки есть кнопка 🗑 / ↩ — тап меняет статус.\n\n" +
+			"3. Под каждой «✓ сохранено» — 🗑 удалить (спросит подтверждение), ✏️ исправить текст.\n" +
+			"4. В списках тапни 🗑 у заметки, чтобы удалить (спросит подтверждение).\n\n" +
 			"Команды для power-режима:\n" +
 			"/pending /recent — открыть списки\n" +
-			"/delete <id> — отбросить по id\n" +
+			"/delete <id> — удалить заметку по id навсегда\n" +
 			"/vocab add <термин> [<термин>...] — пакетное добавление\n" +
 			"/vocab del <термин> — удалить один\n" +
 			"/vocab clear confirm — очистить словарь",
@@ -344,8 +330,6 @@ var locales = map[string]messages{
 			switch filter {
 			case "pending":
 				return "В последних — нет необработанных."
-			case "discarded":
-				return "Недавних отброшенных нет."
 			default:
 				return "Заметок пока нет. Запиши голосовое, чтобы начать."
 			}
@@ -354,10 +338,13 @@ var locales = map[string]messages{
 		UsageDelete: "Используй /delete <id> или тапни 🗑 в /recent или /pending.",
 		BadID:       "ID должен быть числом.",
 		NotFound: func(id int64) string {
-			return fmt.Sprintf("Заметка #%d не найдена (или уже отброшена).", id)
+			return fmt.Sprintf("Заметка #%d не найдена.", id)
 		},
-		Discarded: func(id int64) string {
-			return fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
+		Deleted: func(id int64) string {
+			return fmt.Sprintf("🗑 Заметка #%d удалена навсегда.", id)
+		},
+		DeleteAsk: func(id int64) string {
+			return fmt.Sprintf("🗑 Удалить заметку #%d навсегда? Это нельзя отменить.", id)
 		},
 		Errors: map[string]string{
 			"tmp dir":                "Не удалось подготовить временное хранилище.",
@@ -367,10 +354,8 @@ var locales = map[string]messages{
 			"list pending":           "Не удалось загрузить очередь.",
 			"list recent":            "Не удалось загрузить последние заметки.",
 			"refresh":                "Не удалось обновить вид.",
-			"discard":                "Не удалось отбросить заметку.",
-			"restore":                "Не удалось восстановить заметку.",
+			"delete":                 "Не удалось удалить заметку.",
 			"clear":                  "Не удалось очистить очередь.",
-			"mark discarded":         "Не удалось отбросить заметку.",
 			"edit note":              "Не удалось обновить текст заметки.",
 			"vocab list":             "Не удалось загрузить словарь.",
 			"vocab add":              "Не удалось добавить в словарь.",
@@ -385,18 +370,17 @@ var locales = map[string]messages{
 				return "в очереди"
 			case "analyzed":
 				return "проанализирована"
-			case "discarded":
-				return "отброшена"
 			}
 			return s
 		},
 		Transcribing: "🎙 распознаю…",
-		DiscardBtn:   "🗑 Отбросить",
-		RestoreBtn:   "↩ Вернуть",
+		DeleteBtn:    "🗑 Удалить",
+		DeleteYesBtn: "✓ Да, удалить",
+		DeleteNoBtn:  "✗ Отмена",
 		ShowFullBtn:  "📖 Показать полностью",
 		EditBtn:      "✏️ Исправить",
 		EditPrompt: func(id int64) string {
-			return fmt.Sprintf("✏️ Заметка #%d — ответь на это сообщение исправленным текстом.", id)
+			return fmt.Sprintf("✏️ Заметка #%d — ответь полным исправленным текстом или заменой «старое → новое».", id)
 		},
 		EditUpdated: func(id int64, preview string) string {
 			head := fmt.Sprintf("✏️ Заметка #%d обновлена. Прежний текст сохранён в истории.", id)
@@ -405,25 +389,15 @@ var locales = map[string]messages{
 			}
 			return head + "\n\n«" + preview + "»"
 		},
-		DiscardedReply: func(id int64, preview string) string {
-			head := fmt.Sprintf("🗑 Заметка #%d отброшена.", id)
-			if preview == "" {
-				return head
-			}
-			return head + "\n\n«" + preview + "»"
+		EditNotFound: func(find string) string {
+			return fmt.Sprintf("🔍 «%s» не найдено в заметке — ничего не изменено.", find)
 		},
-		RestoredReply: func(id int64, preview string) string {
-			head := fmt.Sprintf("↩ Заметка #%d возвращена в очередь.", id)
-			if preview == "" {
-				return head
-			}
-			return head + "\n\n«" + preview + "»"
-		},
+		EditUsage: "Пришли полный исправленный текст или замену вида «старое → новое».",
 		Commands: []commandHint{
 			{"pending", "последние 20 необработанных"},
 			{"recent", "последние 10 (любой статус)"},
 			{"vocab", "словарь whisper"},
-			{"delete", "пометить заметку как discarded"},
+			{"delete", "удалить заметку по id"},
 			{"help", "список команд"},
 		},
 		MenuPending: "📋 Необработанные",
@@ -481,20 +455,18 @@ var locales = map[string]messages{
 		},
 		VocabClearFallback: "Текстовый fallback: /vocab clear confirm",
 
-		ShowMoreBtn:        "⤵ Показать ещё",
-		FilterAllBtn:       "Все",
-		FilterPendingBtn:   "Необработанные",
-		FilterDiscardedBtn: "Отброшенные",
-		FilterActiveMark:   "• ",
-		GoDiscardedBtn:     "🕘 Показать отброшенные",
+		ShowMoreBtn:      "⤵ Показать ещё",
+		FilterAllBtn:     "Все",
+		FilterPendingBtn: "Необработанные",
+		FilterActiveMark: "• ",
 
-		ClearAllBtn: "🗑 Отбросить все",
+		ClearAllBtn: "🗑 Удалить все",
 		ClearAllAsk: func(n int) string {
-			return fmt.Sprintf("Отбросить все %d заметок из очереди?\nКаждую можно вернуть по одной из фильтра [Отброшенные].", n)
+			return fmt.Sprintf("Удалить все %d заметок из очереди навсегда? Это нельзя отменить.", n)
 		},
-		ClearAllYesBtn: "✓ Да, отбросить все",
+		ClearAllYesBtn: "✓ Да, удалить все",
 		ClearAllNoBtn:  "✗ Отмена",
-		ClearAllDone:   func(n int) string { return fmt.Sprintf("✓ отброшено %d заметок", n) },
+		ClearAllDone:   func(n int) string { return fmt.Sprintf("🗑 удалено %d заметок", n) },
 
 		DayToday:     "сегодня",
 		DayYesterday: "вчера",

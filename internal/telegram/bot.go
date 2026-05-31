@@ -160,13 +160,17 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle("/start", tb.cmdStart)
 	tb.bot.Handle("/help", tb.cmdHelp)
 	tb.bot.Handle("/vocab", tb.cmdVocab)
-	tb.bot.Handle(&discardBtn, tb.cbDiscard)
-	tb.bot.Handle(&savedRestoreBtn, tb.cbSavedRestore)
+	tb.bot.Handle(&deleteBtn, tb.cbDeleteAsk)
+	tb.bot.Handle(&deleteYesBtn, tb.cbDeleteYes)
+	tb.bot.Handle(&deleteNoBtn, tb.cbDeleteNo)
 	tb.bot.Handle(&savedFullBtn, tb.cbSavedFull)
 	tb.bot.Handle(&editBtn, tb.cbEditPrompt)
-	tb.bot.Handle(&discardPendingBtn, tb.cbDiscardPending)
-	tb.bot.Handle(&discardRecentBtn, tb.cbDiscardRecent)
-	tb.bot.Handle(&restoreRecentBtn, tb.cbRestoreRecent)
+	tb.bot.Handle(&deletePendingBtn, tb.cbDeletePendingAsk)
+	tb.bot.Handle(&deletePendingYesBtn, tb.cbDeletePendingYes)
+	tb.bot.Handle(&deletePendingNoBtn, tb.cbDeletePendingNo)
+	tb.bot.Handle(&deleteRecentBtn, tb.cbDeleteRecentAsk)
+	tb.bot.Handle(&deleteRecentYesBtn, tb.cbDeleteRecentYes)
+	tb.bot.Handle(&deleteRecentNoBtn, tb.cbDeleteRecentNo)
 	tb.bot.Handle(&vocabRmBtn, tb.cbVocabRemove)
 	tb.bot.Handle(&vocabAddBtn, tb.cbVocabAddPrompt)
 	tb.bot.Handle(&vocabClearAskBtn, tb.cbVocabClearAsk)
@@ -383,7 +387,7 @@ func (tb *Bot) processSource(ctx context.Context, c tele.Context, srcPath string
 	pending, _ := tb.db.CountPending(ctx)
 	preview := previewText(text, savedPreviewLen)
 	truncated := len([]rune(strings.ReplaceAll(text, "\n", " "))) > savedPreviewLen
-	return c.Send(tb.msg.Recorded(id, duration, pending, preview, meta.SuspectHallucination), tb.discardMarkup(id, truncated))
+	return c.Send(tb.msg.Recorded(id, duration, pending, preview, meta.SuspectHallucination), tb.savedMarkup(id, truncated))
 }
 
 // hashFile streams the file at path through SHA-256 and returns the hex
@@ -404,7 +408,7 @@ func hashFile(path string) (string, error) {
 }
 
 // previewText returns a single-line, run-length-capped preview suitable
-// for the saved-reply / discard confirmation. Newlines are flattened to
+// for the saved-reply / delete confirmation. Newlines are flattened to
 // spaces; runs over `cap` are truncated with an ellipsis.
 func previewText(s string, cap int) string {
 	flat := strings.ReplaceAll(s, "\n", " ")
@@ -415,6 +419,34 @@ func previewText(s string, cap int) string {
 	return flat
 }
 
+// deleteNote permanently removes a note and its retained audio file. The
+// note's edit history is cleared by the ON DELETE CASCADE FK; the audio
+// removal is best-effort (a stuck file never blocks the delete).
+func (tb *Bot) deleteNote(ctx context.Context, id int64) error {
+	audioPath, err := tb.db.DeleteNote(ctx, id)
+	if err != nil {
+		return err
+	}
+	audio.Delete(tb.audioDir, audioPath, tb.logger)
+	return nil
+}
+
+// deleteAllPending permanently removes every pending note and reclaims the
+// retained audio of each. Returns the number of notes removed.
+func (tb *Bot) deleteAllPending(ctx context.Context) (int, error) {
+	paths, n, err := tb.db.DeleteAllPending(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range paths {
+		audio.Delete(tb.audioDir, p, tb.logger)
+	}
+	return n, nil
+}
+
+// cmdDelete is the typed /delete <id> power-user path. Unlike the inline 🗑
+// button it deletes immediately without a confirm step — typing the id is
+// itself the explicit, deliberate action.
 func (tb *Bot) cmdDelete(c tele.Context) error {
 	args := strings.Fields(c.Message().Payload)
 	if len(args) != 1 {
@@ -426,11 +458,11 @@ func (tb *Bot) cmdDelete(c tele.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := tb.db.MarkDiscarded(ctx, id); err != nil {
+	if err := tb.deleteNote(ctx, id); err != nil {
 		if errors.Is(err, db.ErrNoteNotFound) {
 			return c.Send(tb.msg.NotFound(id))
 		}
-		return tb.errReply(c, "mark discarded", err)
+		return tb.errReply(c, "delete", err)
 	}
-	return c.Send(tb.msg.Discarded(id))
+	return c.Send(tb.msg.Deleted(id))
 }
