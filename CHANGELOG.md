@@ -9,7 +9,7 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-05-31
+## [0.5.0] — 2026-05-31
 
 ### Changed (breaking)
 
