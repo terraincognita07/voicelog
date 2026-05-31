@@ -45,17 +45,24 @@ type messages struct {
 	DeleteAsk          func(id int64) string // confirm prompt before an irreversible delete
 	Errors             map[string]string
 	ErrFallback        string
-	DeleteBtn          string                                // [🗑 Delete] on a saved-note reply / list row
-	DeleteYesBtn       string                                // confirm an irreversible delete
-	DeleteNoBtn        string                                // cancel a delete
-	ShowFullBtn        string                                // [📖 Show full] when preview was truncated
-	EditBtn            string                                // [✏️ Edit] on a saved-note reply
-	EditPrompt         func(id int64) string                 // force-reply prompt; MUST contain the id as its only number
-	EditUpdated        func(id int64, preview string) string // confirmation after the text is replaced
-	EditNotFound       func(find string) string              // find→replace: the "find" text wasn't in the note
-	EditUsage          string                                // edit reply didn't parse / would empty the note
-	Status             func(s string) string                 // localize "pending"/"analyzed"
-	Transcribing       string                                // "transcribing..." flash before result
+	DeleteBtn          string                                                  // [🗑 Delete] on a saved-note reply / list row
+	DeleteYesBtn       string                                                  // confirm an irreversible delete
+	DeleteNoBtn        string                                                  // cancel a delete
+	ShowFullBtn        string                                                  // [📖 Show full] when preview was truncated
+	EditBtn            string                                                  // [✏️ Edit] on a saved-note reply
+	EditPrompt         func(id int64) string                                   // force-reply prompt; MUST contain the id as its only number
+	EditUpdated        func(id int64, preview string) string                   // confirmation after the text is replaced
+	EditNotFound       func(find string) string                                // find→replace: the "find" text wasn't in the note
+	EditUsage          string                                                  // edit reply didn't parse / would empty the note
+	CardBody           func(id int64, when, text string, tags []string) string // note-card detail body
+	CardTagsBtn        string                                                  // [🏷 Tags] on the card
+	CardToListBtn      string                                                  // [⬅ to list] on the card
+	CardBackBtn        string                                                  // [⬅ Back] tags sub-view → card
+	CardTagsHeader     func(id int64, n int) string                            // tags sub-view header
+	TagAddPrompt       func(id int64) string                                   // force-reply add-tags prompt; id is its only number
+	TagsAdded          func(added int) string                                  // confirmation after a manual tag add
+	Status             func(s string) string                                   // localize "pending"/"analyzed"
+	Transcribing       string                                                  // "transcribing..." flash before result
 	Commands           []commandHint
 	MenuPending        string
 	MenuRecent         string
@@ -109,7 +116,7 @@ var locales = map[string]messages{
 			"   🕘 Recent — last 10 notes, filterable by status\n" +
 			"   📒 Vocab — teach whisper names, jargon, rare terms\n" +
 			"3. Under every saved-note reply: 🗑 to delete (asks first), ✏️ to fix the text.\n" +
-			"4. In lists, tap 🗑 on a note to delete it (asks to confirm).\n\n" +
+			"4. In lists, tap a note (#id) to open its card — edit, tag, or delete it.\n\n" +
 			"Power-user shortcuts (slash commands):\n" +
 			"/pending /recent — open lists directly\n" +
 			"/delete <id> — permanently delete a note by id\n" +
@@ -168,6 +175,8 @@ var locales = map[string]messages{
 			"delete":                 "Couldn't delete the note.",
 			"clear":                  "Couldn't clear pending notes.",
 			"edit note":              "Couldn't update the note text.",
+			"tag add":                "Couldn't add tags.",
+			"tag rm":                 "Couldn't remove the tag.",
 			"vocab list":             "Couldn't load the vocabulary.",
 			"vocab add":              "Couldn't add to vocabulary.",
 			"vocab del":              "Couldn't remove from vocabulary.",
@@ -204,6 +213,28 @@ var locales = map[string]messages{
 			return fmt.Sprintf("🔍 «%s» not found in the note — nothing changed.", find)
 		},
 		EditUsage: "Send the full corrected text, or a replacement like «old → new».",
+		CardBody: func(id int64, when, text string, tags []string) string {
+			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
+			if len(tags) > 0 {
+				out += "\n\n🏷 " + strings.Join(tags, ", ")
+			}
+			return out
+		},
+		CardTagsBtn:   "🏷 Tags",
+		CardToListBtn: "⬅ To list",
+		CardBackBtn:   "⬅ Back",
+		CardTagsHeader: func(id int64, n int) string {
+			if n == 0 {
+				return fmt.Sprintf("🏷 Note #%d has no tags yet — tap ➕ Add.", id)
+			}
+			return fmt.Sprintf("🏷 Tags of note #%d (tap a tag to remove):", id)
+		},
+		TagAddPrompt: func(id int64) string {
+			return fmt.Sprintf("🏷 Note #%d — reply with tags separated by spaces.", id)
+		},
+		TagsAdded: func(added int) string {
+			return fmt.Sprintf("🏷 Added %d tag(s).", added)
+		},
 		Commands: []commandHint{
 			{"pending", "last 20 pending notes"},
 			{"recent", "last 10 notes (any status)"},
@@ -298,7 +329,7 @@ var locales = map[string]messages{
 			"   🕘 Последние — последние 10, с фильтром по статусу\n" +
 			"   📒 Словарь — научи whisper именам, жаргону, редким терминам\n" +
 			"3. Под каждой «✓ сохранено» — 🗑 удалить (спросит подтверждение), ✏️ исправить текст.\n" +
-			"4. В списках тапни 🗑 у заметки, чтобы удалить (спросит подтверждение).\n\n" +
+			"4. В списках тапни заметку (#id) — откроется карточка: изменить, теги, удалить.\n\n" +
 			"Команды для power-режима:\n" +
 			"/pending /recent — открыть списки\n" +
 			"/delete <id> — удалить заметку по id навсегда\n" +
@@ -357,6 +388,8 @@ var locales = map[string]messages{
 			"delete":                 "Не удалось удалить заметку.",
 			"clear":                  "Не удалось очистить очередь.",
 			"edit note":              "Не удалось обновить текст заметки.",
+			"tag add":                "Не удалось добавить теги.",
+			"tag rm":                 "Не удалось снять тег.",
 			"vocab list":             "Не удалось загрузить словарь.",
 			"vocab add":              "Не удалось добавить в словарь.",
 			"vocab del":              "Не удалось удалить из словаря.",
@@ -393,6 +426,28 @@ var locales = map[string]messages{
 			return fmt.Sprintf("🔍 «%s» не найдено в заметке — ничего не изменено.", find)
 		},
 		EditUsage: "Пришли полный исправленный текст или замену вида «старое → новое».",
+		CardBody: func(id int64, when, text string, tags []string) string {
+			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
+			if len(tags) > 0 {
+				out += "\n\n🏷 " + strings.Join(tags, ", ")
+			}
+			return out
+		},
+		CardTagsBtn:   "🏷 Теги",
+		CardToListBtn: "⬅ К списку",
+		CardBackBtn:   "⬅ Назад",
+		CardTagsHeader: func(id int64, n int) string {
+			if n == 0 {
+				return fmt.Sprintf("🏷 У заметки #%d пока нет тегов — нажми ➕ Добавить.", id)
+			}
+			return fmt.Sprintf("🏷 Теги заметки #%d (тапни тег, чтобы снять):", id)
+		},
+		TagAddPrompt: func(id int64) string {
+			return fmt.Sprintf("🏷 Заметка #%d — пришли теги через пробел.", id)
+		},
+		TagsAdded: func(added int) string {
+			return fmt.Sprintf("🏷 Добавлено тегов: %d.", added)
+		},
 		Commands: []commandHint{
 			{"pending", "последние 20 необработанных"},
 			{"recent", "последние 10 (любой статус)"},

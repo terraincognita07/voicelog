@@ -30,27 +30,29 @@ func TestRecentStateRoundtrip(t *testing.T) {
 	}
 }
 
-func TestPendingStateWithID(t *testing.T) {
-	st := pendingState{Limit: 20, ExpDay: "2026-05-26"}
-	encoded := st.encodeWithID(42)
-	gotID, gotState := parsePendingStateWithID(encoded)
-	if gotID != 42 {
-		t.Errorf("id: want 42, got %d", gotID)
+func TestCardRefRoundtrip(t *testing.T) {
+	cases := []cardRef{
+		{id: 42, kind: "p", state: pendingState{Limit: 20, ExpDay: "2026-05-26"}.encode()},
+		{id: 7, kind: "r", state: recentState{Filter: "pending", Limit: 30, ExpDay: ""}.encode()},
 	}
-	if gotState != st {
-		t.Errorf("state: want %+v, got %+v", st, gotState)
+	for _, in := range cases {
+		got, ok := parseCardRef(in.encode())
+		if !ok || got != in {
+			t.Errorf("cardRef roundtrip: in=%+v got=%+v ok=%v (encoded=%q)", in, got, ok, in.encode())
+		}
 	}
-}
-
-func TestRecentStateWithID(t *testing.T) {
-	st := recentState{Filter: "pending", Limit: 30, ExpDay: "2026-05-26"}
-	encoded := st.encodeWithID(42)
-	gotID, gotState := parseRecentStateWithID(encoded)
-	if gotID != 42 {
-		t.Errorf("id: want 42, got %d", gotID)
+	// tag-remove carries an index alongside the ref.
+	ref := cardRef{id: 9, kind: "r", state: "all:10:"}
+	gotRef, idx, ok := parseTagRemove(ref.encodeTagRemove(3))
+	if !ok || gotRef != ref || idx != 3 {
+		t.Errorf("tag-remove roundtrip: ref=%+v idx=%d ok=%v", gotRef, idx, ok)
 	}
-	if gotState != st {
-		t.Errorf("state: want %+v, got %+v", st, gotState)
+	// Garbage / bad kind is rejected.
+	if _, ok := parseCardRef("notanint:p:"); ok {
+		t.Error("non-numeric id must be rejected")
+	}
+	if _, ok := parseCardRef("5:x:state"); ok {
+		t.Error("unknown kind must be rejected")
 	}
 }
 
@@ -69,8 +71,9 @@ func TestParseStateGarbageDoesNotPanic(t *testing.T) {
 	for _, c := range cases {
 		_ = parsePendingState(c)
 		_ = parseRecentState(c)
-		_, _ = parsePendingStateWithID(c)
-		_, _ = parseRecentStateWithID(c)
+		_, _ = parseCardRef(c)
+		_, _, _ = parseTagRemove(c)
+		_, _ = parseListRef(c)
 	}
 }
 
@@ -190,14 +193,20 @@ func TestParseRecentState_EdgeDefaults(t *testing.T) {
 }
 
 func TestEncodeLimitsFit64Bytes(t *testing.T) {
-	// Telegram caps callback data at 64 bytes. The longest realistic
-	// payload we generate is an action button with state.
-	st := recentState{Filter: "pending", Limit: 99999, ExpDay: "2026-05-26"}
-	if got := len(st.encodeWithID(999999999999)); got > 64 {
-		t.Errorf("recent encodeWithID = %d bytes, exceeds Telegram 64-byte cap", got)
+	// Telegram caps callback data at 64 bytes. The longest payloads we now
+	// generate are the note-card refs: id + kind + the originating list state
+	// (and, for tag removal, a tag index).
+	rState := recentState{Filter: "pending", Limit: 99999, ExpDay: "2026-05-26"}.encode()
+	ref := cardRef{id: 999999999999, kind: "r", state: rState}
+	if got := len(ref.encode()); got > 64 {
+		t.Errorf("cardRef.encode = %d bytes, exceeds Telegram 64-byte cap", got)
 	}
-	pst := pendingState{Limit: 99999, ExpDay: "2026-05-26"}
-	if got := len(pst.encodeWithID(999999999999)); got > 64 {
-		t.Errorf("pending encodeWithID = %d bytes, exceeds Telegram 64-byte cap", got)
+	if got := len(ref.encodeTagRemove(99)); got > 64 {
+		t.Errorf("cardRef.encodeTagRemove = %d bytes, exceeds Telegram 64-byte cap", got)
+	}
+	pState := pendingState{Limit: 99999, ExpDay: "2026-05-26"}.encode()
+	pref := cardRef{id: 999999999999, kind: "p", state: pState}
+	if got := len(pref.encode()); got > 64 {
+		t.Errorf("pending cardRef.encode = %d bytes, exceeds Telegram 64-byte cap", got)
 	}
 }

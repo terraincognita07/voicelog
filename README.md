@@ -32,22 +32,25 @@ an MCP server you self-host.
 ## Features
 
 - **Voice + text capture** — speak on the go or type when you can't; both
-  become searchable notes with a one-tap delete.
+  become searchable, taggable, editable notes.
 - **Local transcription** — whisper.cpp on your own box, nothing leaves it.
 - **Query via Claude (MCP)** — search, summarize and review your corpus on
   demand in plain language; 15 MCP tools, with example prompts in
   [docs/MCP.md](docs/MCP.md#asking-claude-example-prompts).
-- **Tags** — Claude labels notes with categories that aren't in the words
-  (`#идея`, `#философия`), then pulls them back deterministically with
-  `notes_by_tag`; the bot shows `🏷` tags inline in its lists.
+- **Tags** — label notes with categories that aren't in the words
+  (`#идея`, `#философия`) and pull them back deterministically with
+  `notes_by_tag`. Claude tags via MCP; you add/remove them by hand from a
+  note's card. Shown `🏷` inline in the bot's lists.
 - **Russian-aware search** — Cyrillic queries are stemmed (Snowball) so
   searching `работа` also finds `работе`/`работу`; Latin terms stay exact.
-- **Fix what whisper misheard** — `✏️ Edit` a note's text right in Telegram
-  (previous version archived), or have Claude correct / `retranscribe` it.
+- **Fix what whisper misheard** — `✏️ Edit` any note right in Telegram: send
+  the full text or a quick `old → new` swap (previous version archived), or
+  have Claude `retranscribe` it.
 - **Self-improving accuracy** — Claude can spot recurring names/jargon across
   the corpus and add them to the whisper vocabulary via MCP (`add_vocab`).
 - **Button-driven UI** — pending queue, day-grouped lists, status filters,
-  delete-with-confirm — all inline, typed commands are a fallback.
+  per-note cards (edit / tag / delete) — all inline, typed commands are a
+  fallback.
 - **Single-user, self-hosted** — Telegram allow-list + bearer-token MCP;
   pure-Go (`CGO_ENABLED=0`), three small containers.
 

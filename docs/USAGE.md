@@ -41,9 +41,10 @@ the `locales` map in `internal/telegram/locale.go`.
   `old → new` (also `->` / `=>`), which replaces every occurrence of `old` —
   handy for one whisper-misheard word without retyping the whole note. The
   previous text is archived to `notes_history` (reversible at the SQL level).
-- **Tags (`🏷`)** set by Claude via MCP show inline in `/pending` / `/recent`
-  rows (`#9 22:04 · text…  🏷 идея, философия`). The bot only *displays* them;
-  add or remove a tag by asking Claude (`tag_note` / `untag_note`).
+- **Tags (`🏷`)** show inline in `/pending` / `/recent` rows
+  (`#9 22:04 · text…  🏷 идея, философия`). Claude sets them via MCP, and you
+  can add/remove them by hand from a note's card (see below) — or ask Claude
+  (`tag_note` / `untag_note`).
 - **Day-grouped lists** on `/pending` and `/recent`: notes are split into
   `📅 today (N)` / `📅 yesterday (N)` / `📅 2026-05-26 (N)` sections.
   Today is always expanded; older days are collapsed and shown as a
@@ -51,10 +52,13 @@ the `locales` map in `internal/telegram/locale.go`.
 - **Status filter chips** at the top of `/recent`: `[All] [Pending]`;
   active chip prefixed with `•`. Delete/pagination/day-expand all preserve
   the active filter.
-- **Inline `[🗑 #id]` button** for every visible note. Tap it → the view
-  swaps to a `Delete #id permanently?` confirm; `[✓ Yes]` deletes and
-  re-renders the list (same filter, page, expanded day), `[✗ Cancel]`
-  returns to the list untouched.
+- **Note card.** Each visible note has a `[#id]` button. Tap it to open the
+  note's card — full text + tags with `[✏️ Edit]` `[🏷 Tags]` `[🗑 Delete]`
+  `[⬅ To list]`. **Edit** and **Delete** behave like the saved-reply buttons;
+  **Tags** opens a sub-view to add (reply with space-separated tags) or remove
+  (`[tag ❌]`) tags by hand. `⬅ To list` returns to the exact view (filter,
+  page, expanded day) you came from. This is how you edit/tag/delete notes
+  recorded earlier — not just the just-recorded one.
 - **`[⤵ Show more]`** grows the list by one page; capped at 40 notes per
   message to stay under Telegram's 4096-byte limit.
 - **`[🗑 Delete all]`** under `/pending` permanently deletes every pending

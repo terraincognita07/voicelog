@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -27,20 +26,14 @@ import (
 // --- buttons --------------------------------------------------------------
 
 var (
-	deletePendingBtn    = tele.InlineButton{Unique: "del_pending"}       // 🗑 in /pending → confirm
-	deletePendingYesBtn = tele.InlineButton{Unique: "del_pending_y"}     // confirm /pending delete
-	deletePendingNoBtn  = tele.InlineButton{Unique: "del_pending_n"}     // cancel /pending delete
-	deleteRecentBtn     = tele.InlineButton{Unique: "del_recent"}        // 🗑 in /recent → confirm
-	deleteRecentYesBtn  = tele.InlineButton{Unique: "del_recent_y"}      // confirm /recent delete
-	deleteRecentNoBtn   = tele.InlineButton{Unique: "del_recent_n"}      // cancel /recent delete
-	pendingMoreBtn      = tele.InlineButton{Unique: "pending_more"}      // grow /pending list
-	recentMoreBtn       = tele.InlineButton{Unique: "recent_more"}       // grow /recent list
-	recentFilterBtn     = tele.InlineButton{Unique: "recent_filter"}     // status filter chip
-	pendingClearAskBtn  = tele.InlineButton{Unique: "pending_clear_ask"} // open confirm
-	pendingClearYesBtn  = tele.InlineButton{Unique: "pending_clear_yes"} // confirm wipe
-	pendingClearNoBtn   = tele.InlineButton{Unique: "pending_clear_no"}  // cancel wipe
-	pendingDayBtn       = tele.InlineButton{Unique: "pending_day"}       // toggle day fold in /pending
-	recentDayBtn        = tele.InlineButton{Unique: "recent_day"}        // toggle day fold in /recent
+	pendingMoreBtn     = tele.InlineButton{Unique: "pending_more"}      // grow /pending list
+	recentMoreBtn      = tele.InlineButton{Unique: "recent_more"}       // grow /recent list
+	recentFilterBtn    = tele.InlineButton{Unique: "recent_filter"}     // status filter chip
+	pendingClearAskBtn = tele.InlineButton{Unique: "pending_clear_ask"} // open confirm
+	pendingClearYesBtn = tele.InlineButton{Unique: "pending_clear_yes"} // confirm wipe
+	pendingClearNoBtn  = tele.InlineButton{Unique: "pending_clear_no"}  // cancel wipe
+	pendingDayBtn      = tele.InlineButton{Unique: "pending_day"}       // toggle day fold in /pending
+	recentDayBtn       = tele.InlineButton{Unique: "recent_day"}        // toggle day fold in /recent
 )
 
 // pendingPageSize / recentPageSize are the default visible windows. They
@@ -63,10 +56,6 @@ func (s pendingState) encode() string {
 	return strconv.Itoa(s.Limit) + ":" + s.ExpDay
 }
 
-func (s pendingState) encodeWithID(id int64) string {
-	return strconv.FormatInt(id, 10) + ":" + s.encode()
-}
-
 func parsePendingState(raw string) pendingState {
 	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
 	s := pendingState{Limit: pendingPageSize}
@@ -81,17 +70,6 @@ func parsePendingState(raw string) pendingState {
 	return s
 }
 
-// parsePendingStateWithID consumes one leading int64 then the state encoding.
-func parsePendingStateWithID(raw string) (int64, pendingState) {
-	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
-	id, _ := strconv.ParseInt(parts[0], 10, 64)
-	rest := ""
-	if len(parts) == 2 {
-		rest = parts[1]
-	}
-	return id, parsePendingState(rest)
-}
-
 type recentState struct {
 	Filter string
 	Limit  int
@@ -104,10 +82,6 @@ func (s recentState) encode() string {
 		f = "all"
 	}
 	return f + ":" + strconv.Itoa(s.Limit) + ":" + s.ExpDay
-}
-
-func (s recentState) encodeWithID(id int64) string {
-	return strconv.FormatInt(id, 10) + ":" + s.encode()
 }
 
 func parseRecentState(raw string) recentState {
@@ -125,16 +99,6 @@ func parseRecentState(raw string) recentState {
 		s.ExpDay = validDateKey(parts[2])
 	}
 	return s
-}
-
-func parseRecentStateWithID(raw string) (int64, recentState) {
-	parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
-	id, _ := strconv.ParseInt(parts[0], 10, 64)
-	rest := ""
-	if len(parts) == 2 {
-		rest = parts[1]
-	}
-	return id, parseRecentState(rest)
 }
 
 // validRecentFilter returns the canonical status string for the given
@@ -377,9 +341,9 @@ func (tb *Bot) renderPending(ctx context.Context, st pendingState) (string, *tel
 
 	var actions []tele.InlineButton
 	for _, n := range visible {
-		b := deletePendingBtn
-		b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
-		b.Data = st.encodeWithID(n.ID)
+		b := openCardBtn
+		b.Text = "#" + strconv.FormatInt(n.ID, 10)
+		b.Data = cardRef{id: n.ID, kind: "p", state: st.encode()}.encode()
 		actions = append(actions, b)
 	}
 	rows := chunkButtons(actions, 4)
@@ -452,9 +416,9 @@ func (tb *Bot) renderRecent(ctx context.Context, st recentState) (string, *tele.
 
 	var actions []tele.InlineButton
 	for _, n := range visible {
-		b := deleteRecentBtn
-		b.Text = "🗑 #" + strconv.FormatInt(n.ID, 10)
-		b.Data = st.encodeWithID(n.ID)
+		b := openCardBtn
+		b.Text = "#" + strconv.FormatInt(n.ID, 10)
+		b.Data = cardRef{id: n.ID, kind: "r", state: st.encode()}.encode()
 		actions = append(actions, b)
 	}
 	rows = append(rows, chunkButtons(actions, 4)...)
@@ -504,117 +468,9 @@ func (tb *Bot) recentFilterRow(active string) []tele.InlineButton {
 
 // --- callbacks ------------------------------------------------------------
 //
-// Per-note deletion from a list is irreversible, so it runs through a
-// three-step confirm: a 🗑 tap (Ask) swaps the body to "Delete #N
-// permanently?", then Yes deletes + re-renders the list and No just
-// re-renders it. All three steps are generic over the view state type S
-// (pendingState / recentState) so /pending and /recent share one
-// implementation. Day-toggle and Show-more handlers have no mutation and
-// keep their own simpler shape.
-
-// cbListDeleteAsk swaps the list for a "Delete #N permanently?" confirm.
-// yesProto/noProto are the view-specific Yes/No buttons; both carry the
-// note id + current state so the answer can delete-then-re-render or just
-// re-render the exact same view.
-func cbListDeleteAsk[S any](
-	tb *Bot,
-	c tele.Context,
-	parseFn func(string) (int64, S),
-	encodeWithID func(S, int64) string,
-	yesProto, noProto tele.InlineButton,
-) error {
-	cb := c.Callback()
-	if cb == nil {
-		return nil
-	}
-	id, st := parseFn(cb.Data)
-	if id == 0 {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
-	}
-	data := encodeWithID(st, id)
-	yes := yesProto
-	yes.Text = tb.msg.DeleteYesBtn
-	yes.Data = data
-	no := noProto
-	no.Text = tb.msg.DeleteNoBtn
-	no.Data = data
-	kb := &tele.ReplyMarkup{InlineKeyboard: [][]tele.InlineButton{{yes, no}}}
-	tb.tryEdit(c, tb.msg.DeleteAsk(id), kb)
-	return c.Respond()
-}
-
-// cbListDeleteYes deletes the confirmed note (+ its retained audio) and
-// re-renders the list in the preserved state.
-func cbListDeleteYes[S any](
-	tb *Bot,
-	c tele.Context,
-	parseFn func(string) (int64, S),
-	renderFn func(context.Context, S) (string, *tele.ReplyMarkup, error),
-) error {
-	cb := c.Callback()
-	if cb == nil {
-		return nil
-	}
-	id, st := parseFn(cb.Data)
-	if id == 0 {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := tb.deleteNote(ctx, id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
-		return tb.errToast(c, "delete", err)
-	}
-	body, kb, err := renderFn(ctx, st)
-	if err != nil {
-		return tb.errToast(c, "refresh", err)
-	}
-	tb.editWithList(c, body, kb)
-	return c.Respond()
-}
-
-// cbListDeleteNo cancels the delete and re-renders the list unchanged.
-func cbListDeleteNo[S any](
-	tb *Bot,
-	c tele.Context,
-	parseFn func(string) (int64, S),
-	renderFn func(context.Context, S) (string, *tele.ReplyMarkup, error),
-) error {
-	cb := c.Callback()
-	if cb == nil {
-		return nil
-	}
-	_, st := parseFn(cb.Data)
-	body, kb, err := renderFn(context.Background(), st)
-	if err != nil {
-		return tb.errToast(c, "refresh", err)
-	}
-	tb.editWithList(c, body, kb)
-	return c.Respond()
-}
-
-func (tb *Bot) cbDeletePendingAsk(c tele.Context) error {
-	return cbListDeleteAsk(tb, c, parsePendingStateWithID,
-		func(s pendingState, id int64) string { return s.encodeWithID(id) },
-		deletePendingYesBtn, deletePendingNoBtn)
-}
-func (tb *Bot) cbDeletePendingYes(c tele.Context) error {
-	return cbListDeleteYes(tb, c, parsePendingStateWithID, tb.renderPending)
-}
-func (tb *Bot) cbDeletePendingNo(c tele.Context) error {
-	return cbListDeleteNo(tb, c, parsePendingStateWithID, tb.renderPending)
-}
-
-func (tb *Bot) cbDeleteRecentAsk(c tele.Context) error {
-	return cbListDeleteAsk(tb, c, parseRecentStateWithID,
-		func(s recentState, id int64) string { return s.encodeWithID(id) },
-		deleteRecentYesBtn, deleteRecentNoBtn)
-}
-func (tb *Bot) cbDeleteRecentYes(c tele.Context) error {
-	return cbListDeleteYes(tb, c, parseRecentStateWithID, tb.renderRecent)
-}
-func (tb *Bot) cbDeleteRecentNo(c tele.Context) error {
-	return cbListDeleteNo(tb, c, parseRecentStateWithID, tb.renderRecent)
-}
+// Per-note actions (open / edit / tag / delete) live on the note card — see
+// note_card.go. The list itself only opens cards and refreshes the view
+// (show-more / day-toggle / filter chip), plus the mass clear-all below.
 
 // "View refresh only" callbacks for Show-more / Day-toggle / Filter chip.
 // They share the same shape: parse a state, render, edit.

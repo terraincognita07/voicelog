@@ -49,6 +49,9 @@ func TestLocalesAreComplete(t *testing.T) {
 				"ErrFallback":        m.ErrFallback,
 				"Transcribing":       m.Transcribing,
 				"EditUsage":          m.EditUsage,
+				"CardTagsBtn":        m.CardTagsBtn,
+				"CardToListBtn":      m.CardToListBtn,
+				"CardBackBtn":        m.CardBackBtn,
 			} {
 				if got == "" {
 					t.Errorf("%s is empty", label)
@@ -84,6 +87,18 @@ func TestLocalesAreComplete(t *testing.T) {
 			}
 			if m.EditNotFound == nil || m.EditNotFound("x") == "" {
 				t.Error("EditNotFound missing or returns empty")
+			}
+			if m.CardBody == nil || m.CardBody(1, "when", "text", nil) == "" || m.CardBody(1, "when", "text", []string{"a"}) == "" {
+				t.Error("CardBody missing or returns empty")
+			}
+			if m.CardTagsHeader == nil || m.CardTagsHeader(1, 0) == "" || m.CardTagsHeader(1, 2) == "" {
+				t.Error("CardTagsHeader missing or returns empty")
+			}
+			if m.TagAddPrompt == nil || m.TagAddPrompt(42) == "" || !strings.Contains(m.TagAddPrompt(42), "42") {
+				t.Error("TagAddPrompt missing, empty, or does not contain the id")
+			}
+			if m.TagsAdded == nil || m.TagsAdded(0) == "" || m.TagsAdded(3) == "" {
+				t.Error("TagsAdded missing or returns empty")
 			}
 			if m.VocabList == nil || m.VocabList(nil) == "" || m.VocabList([]string{"a"}) == "" {
 				t.Error("VocabList missing or returns empty")

@@ -282,6 +282,9 @@ func (tb *Bot) onText(c tele.Context) error {
 	if id, ok := tb.editReplyNoteID(msg); ok {
 		return tb.applyNoteEdit(c, id, msg.Text)
 	}
+	if id, ok := tb.tagAddReplyNoteID(msg); ok {
+		return tb.handleTagAddReply(c, id, msg.Text)
+	}
 	return tb.saveTextNote(c, msg)
 }
 

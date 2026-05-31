@@ -52,6 +52,14 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   it swaps every occurrence of `old` in the note, so fixing a single
   whisper-misheard word no longer means retyping the whole transcript. The
   previous text is still archived to `notes_history`.
+- **Note card — edit/tag/delete any existing note from the lists.** Tapping a
+  note in `/pending` or `/recent` now opens a card (full text + tags) with
+  `[✏️ Edit] [🏷 Tags] [🗑 Delete] [⬅ To list]`, so editing, tagging and
+  deleting are no longer limited to the just-recorded saved-reply. The Tags
+  sub-view adds tags (reply with space-separated tags) and removes them
+  (`[tag ❌]`) right in the bot. The per-note list button changed from
+  `[🗑 #id]` (immediate delete-confirm) to `[#id]` (open card); deleting from
+  a list is now one tap deeper, behind the same confirm.
 
 ## [0.3.0] — 2026-05-28
 

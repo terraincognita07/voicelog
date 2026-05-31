@@ -127,10 +127,10 @@ func TestRenderPending_TodayOnly(t *testing.T) {
 	}
 
 	rows := keyboardTexts(kb)
-	// Expect: action row with two trash buttons + [Clear all] row.
-	wantTrash := []string{"🗑 #" + itoa(id2), "🗑 #" + itoa(id1)}
-	if findRow(rows, func(r []string) bool { return stringSliceEq(r, wantTrash) }) < 0 {
-		t.Errorf("missing action row %v; got %v", wantTrash, rows)
+	// Expect: a row of open-card buttons (one per note) + [Clear all] row.
+	wantOpen := []string{"#" + itoa(id2), "#" + itoa(id1)}
+	if findRow(rows, func(r []string) bool { return stringSliceEq(r, wantOpen) }) < 0 {
+		t.Errorf("missing open-card row %v; got %v", wantOpen, rows)
 	}
 	if findRow(rows, func(r []string) bool { return len(r) == 1 && r[0] == tb.msg.ClearAllBtn }) < 0 {
 		t.Errorf("missing [Clear all] row; got %v", rows)
@@ -191,13 +191,13 @@ func TestRenderPending_ExpandYesterday(t *testing.T) {
 	rows := keyboardTexts(kb)
 	if findRow(rows, func(r []string) bool {
 		for _, c := range r {
-			if c == "🗑 #"+itoa(idY) {
+			if c == "#"+itoa(idY) {
 				return true
 			}
 		}
 		return false
 	}) < 0 {
-		t.Errorf("expanded day must have action button for its notes; got %v", rows)
+		t.Errorf("expanded day must have an open-card button for its notes; got %v", rows)
 	}
 }
 
@@ -237,7 +237,7 @@ func TestRenderRecent_FilterChipsAlwaysPresent(t *testing.T) {
 	}
 }
 
-func TestRenderRecent_PendingFilterShowsDeleteButtons(t *testing.T) {
+func TestRenderRecent_PendingFilterShowsNoteButtons(t *testing.T) {
 	tb := newTestBot(t)
 	now := time.Now()
 	id := seedNoteAt(t, tb, now.Add(-1*time.Minute), "pending row")
@@ -254,8 +254,8 @@ func TestRenderRecent_PendingFilterShowsDeleteButtons(t *testing.T) {
 	if rows[0][1] != tb.msg.FilterActiveMark+tb.msg.FilterPendingBtn {
 		t.Errorf("Pending chip not marked active: %q", rows[0][1])
 	}
-	// Each visible note offers a 🗑 delete button.
-	want := "🗑 #" + itoa(id)
+	// Each visible note offers an open-card button (#id → the note card).
+	want := "#" + itoa(id)
 	found := false
 	for _, row := range rows {
 		for _, c := range row {
@@ -265,7 +265,7 @@ func TestRenderRecent_PendingFilterShowsDeleteButtons(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("missing delete button %q; got %v", want, rows)
+		t.Errorf("missing open-card button %q; got %v", want, rows)
 	}
 }
 

@@ -66,44 +66,40 @@ func FuzzParseRecentState(f *testing.F) {
 	})
 }
 
-func FuzzParsePendingStateWithID(f *testing.F) {
+func FuzzParseCardRef(f *testing.F) {
 	for _, seed := range []string{
 		"",
-		"42|20:",
-		"42|20:2026-05-26",
-		"abc|garbage",
-		"-1|",
+		"42:p:20:",
+		"7:r:pending:25:2026-05-26",
+		"abc:p:x",
+		"-1:r:",
+		"5:x:state", // bad kind
 		string([]byte{0xff}),
 	} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		_, got := parsePendingStateWithID(in)
-		if got.Limit < 1 {
-			t.Errorf("Limit must be >= 1 after parse; got %d for %q", got.Limit, in)
+		// Contract: never panic; ok=true implies a positive id and a
+		// whitelisted kind.
+		if ref, ok := parseCardRef(in); ok && (ref.id <= 0 || (ref.kind != "p" && ref.kind != "r")) {
+			t.Errorf("parseCardRef(%q) ok but invalid ref %+v", in, ref)
 		}
 	})
 }
 
-func FuzzParseRecentStateWithID(f *testing.F) {
+func FuzzParseTagRemove(f *testing.F) {
 	for _, seed := range []string{
 		"",
-		"42|pending:25:",
-		"42|discarded:25:2026-05-26",
-		"abc|garbage",
-		"-1|all:not-a-number:not-a-date",
+		"42:p:3:20:",
+		"7:r:0:pending:25:2026-05-26",
+		"abc:p:x:state",
+		"5:x:1:state", // bad kind
 	} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		_, got := parseRecentStateWithID(in)
-		if got.Limit < 1 {
-			t.Errorf("Limit must be >= 1 after parse; got %d for %q", got.Limit, in)
-		}
-		switch got.Filter {
-		case "", "pending":
-		default:
-			t.Errorf("Filter must be whitelisted; got %q for %q", got.Filter, in)
+		if ref, _, ok := parseTagRemove(in); ok && (ref.id <= 0 || (ref.kind != "p" && ref.kind != "r")) {
+			t.Errorf("parseTagRemove(%q) ok but invalid ref %+v", in, ref)
 		}
 	})
 }
