@@ -48,7 +48,8 @@ func TestLocalesAreComplete(t *testing.T) {
 				"DayYesterday":       m.DayYesterday,
 				"ErrFallback":        m.ErrFallback,
 				"Transcribing":       m.Transcribing,
-				"EditUsage":          m.EditUsage,
+				"EditReplaceBtn":     m.EditReplaceBtn,
+				"EditFullBtn":        m.EditFullBtn,
 				"CardTagsBtn":        m.CardTagsBtn,
 				"CardToListBtn":      m.CardToListBtn,
 				"CardBackBtn":        m.CardBackBtn,
@@ -77,10 +78,19 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.DeleteAsk == nil || m.DeleteAsk(1) == "" {
 				t.Error("DeleteAsk missing or returns empty")
 			}
-			// EditPrompt must contain the id as its only number so onText can
-			// recover it from a force-reply (see matchEditPrompt).
+			// Edit-menu / prompt strings: the id-bearing ones must echo the id
+			// for context; the others just need to be non-empty per locale.
 			if m.EditPrompt == nil || m.EditPrompt(42) == "" || !strings.Contains(m.EditPrompt(42), "42") {
 				t.Error("EditPrompt missing, empty, or does not contain the id")
+			}
+			if m.EditAskFind == nil || m.EditAskFind(42) == "" || !strings.Contains(m.EditAskFind(42), "42") {
+				t.Error("EditAskFind missing, empty, or does not contain the id")
+			}
+			if m.EditAskFull == nil || m.EditAskFull(42) == "" || !strings.Contains(m.EditAskFull(42), "42") {
+				t.Error("EditAskFull missing, empty, or does not contain the id")
+			}
+			if m.EditAskReplace == nil || m.EditAskReplace("кот") == "" || !strings.Contains(m.EditAskReplace("кот"), "кот") {
+				t.Error("EditAskReplace missing, empty, or drops the find term")
 			}
 			if m.EditUpdated == nil || m.EditUpdated(1, "x") == "" || m.EditUpdated(1, "") == "" {
 				t.Error("EditUpdated missing or returns empty")

@@ -9,6 +9,24 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-31
+
+### Changed
+
+- **Note editing is now button-driven — the `old → new` arrow syntax is gone.**
+  Tapping `✏️ Edit` (on a saved-note reply or a note card) turns that message
+  into an in-place menu: `[🔤 Replace a word]` asks *which word → with what* as
+  two plain prompts, `[📝 Rewrite all]` takes the full new text, `[✗ Cancel]`
+  restores the note. The note message is updated **in place** (the old reply no
+  longer lingers with stale text) and the typed answers are deleted to keep the
+  chat clean. This replaces the previous force-reply flow, where a fix had to be
+  typed as `old → new` and silently overwrote the **whole** note when the arrow
+  was mistyped (e.g. `word->fix` without surrounding spaces). Text is still
+  archived to `notes_history`. Internal: drops `splitEdit` / `matchEditPrompt`
+  and the `EditUsage` string; `✏️` now opens `cbEditOpen`.
+- **MCP `serverVersion` bumped `0.5.1` → `0.6.0`** to track the release tag
+  (RELEASING.md step 8). No MCP behavior change this release.
+
 ## [0.5.1] — 2026-05-31
 
 ### Fixed

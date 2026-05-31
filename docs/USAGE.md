@@ -36,11 +36,14 @@ the `locales` map in `internal/telegram/locale.go`.
   message swaps to a `Delete #N permanently?` confirm with `[✓ Yes, delete]` /
   `[✗ Cancel]`. Confirming erases the note, its edit history, and any retained
   audio file. There is no undo — that's the point of the confirm step.
-- **Inline ✏️ Edit button** next to 🗑 — tap it, the bot sends a force-reply
-  prompt. Reply with the **full corrected text**, OR just a fix as
-  `old → new` (also `->` / `=>`), which replaces every occurrence of `old` —
-  handy for one whisper-misheard word without retyping the whole note. The
-  previous text is archived to `notes_history` (reversible at the SQL level).
+- **Inline ✏️ Edit button** next to 🗑 — tap it and the message turns into an
+  edit menu **in place** (no separate prompt to dangle): `[🔤 Replace a word]`
+  walks you through *which word → with what* as two plain questions (no syntax
+  to remember — fixes one whisper-misheard word without retyping the note),
+  `[📝 Rewrite all]` takes the whole new text, `[✗ Cancel]` restores the note.
+  The note message is updated in place and the previous text is archived to
+  `notes_history` (reversible at the SQL level). Back out at any point and
+  nothing is changed or left hanging.
 - **Tags (`🏷`)** show inline in `/pending` / `/recent` rows
   (`#9 22:04 · text…  🏷 идея, философия`). Claude sets them via MCP, and you
   can add/remove them by hand from a note's card (see below) — or ask Claude

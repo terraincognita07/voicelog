@@ -49,11 +49,15 @@ type messages struct {
 	DeleteYesBtn       string                                                  // confirm an irreversible delete
 	DeleteNoBtn        string                                                  // cancel a delete
 	ShowFullBtn        string                                                  // [📖 Show full] when preview was truncated
-	EditBtn            string                                                  // [✏️ Edit] on a saved-note reply
-	EditPrompt         func(id int64) string                                   // force-reply prompt; MUST contain the id as its only number
-	EditUpdated        func(id int64, preview string) string                   // confirmation after the text is replaced
-	EditNotFound       func(find string) string                                // find→replace: the "find" text wasn't in the note
-	EditUsage          string                                                  // edit reply didn't parse / would empty the note
+	EditBtn            string                                                  // [✏️ Edit] on a saved-note reply / card
+	EditPrompt         func(id int64) string                                   // edit-menu header ("what to change?"); id shown for context
+	EditReplaceBtn     string                                                  // [🔤 Replace a word] in the edit menu
+	EditFullBtn        string                                                  // [📝 Rewrite all] in the edit menu
+	EditAskFind        func(id int64) string                                   // prompt: which word/phrase to replace
+	EditAskReplace     func(find string) string                                // prompt: replace «find» with what
+	EditAskFull        func(id int64) string                                   // prompt: send the full corrected text
+	EditUpdated        func(id int64, preview string) string                   // confirmation header after the text is replaced
+	EditNotFound       func(find string) string                                // the "find" word wasn't in the note
 	CardBody           func(id int64, when, text string, tags []string) string // note-card detail body
 	CardTagsBtn        string                                                  // [🏷 Tags] on the card
 	CardToListBtn      string                                                  // [⬅ to list] on the card
@@ -200,7 +204,18 @@ var locales = map[string]messages{
 		ShowFullBtn:  "📖 Show full",
 		EditBtn:      "✏️ Edit",
 		EditPrompt: func(id int64) string {
-			return fmt.Sprintf("✏️ Note #%d — reply with the full corrected text, or just a fix as «old → new».", id)
+			return fmt.Sprintf("✏️ Note #%d — what do you want to change?", id)
+		},
+		EditReplaceBtn: "🔤 Replace a word",
+		EditFullBtn:    "📝 Rewrite all",
+		EditAskFind: func(id int64) string {
+			return fmt.Sprintf("🔤 Note #%d — which word or phrase should I replace?", id)
+		},
+		EditAskReplace: func(find string) string {
+			return fmt.Sprintf("🔤 Replace «%s» with what? Send the new text.", find)
+		},
+		EditAskFull: func(id int64) string {
+			return fmt.Sprintf("📝 Note #%d — send the new full text.", id)
 		},
 		EditUpdated: func(id int64, preview string) string {
 			head := fmt.Sprintf("✏️ Note #%d updated. The previous text is archived.", id)
@@ -210,9 +225,8 @@ var locales = map[string]messages{
 			return head + "\n\n«" + preview + "»"
 		},
 		EditNotFound: func(find string) string {
-			return fmt.Sprintf("🔍 «%s» not found in the note — nothing changed.", find)
+			return fmt.Sprintf("🔍 «%s» is not in the note — nothing changed.", find)
 		},
-		EditUsage: "Send the full corrected text, or a replacement like «old → new».",
 		CardBody: func(id int64, when, text string, tags []string) string {
 			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
 			if len(tags) > 0 {
@@ -413,7 +427,18 @@ var locales = map[string]messages{
 		ShowFullBtn:  "📖 Показать полностью",
 		EditBtn:      "✏️ Исправить",
 		EditPrompt: func(id int64) string {
-			return fmt.Sprintf("✏️ Заметка #%d — ответь полным исправленным текстом или заменой «старое → новое».", id)
+			return fmt.Sprintf("✏️ Заметка #%d — что изменить?", id)
+		},
+		EditReplaceBtn: "🔤 Заменить слово",
+		EditFullBtn:    "📝 Переписать всю",
+		EditAskFind: func(id int64) string {
+			return fmt.Sprintf("🔤 Заметка #%d — какое слово или фразу заменить?", id)
+		},
+		EditAskReplace: func(find string) string {
+			return fmt.Sprintf("🔤 Заменить «%s» на что? Пришли новый текст.", find)
+		},
+		EditAskFull: func(id int64) string {
+			return fmt.Sprintf("📝 Заметка #%d — пришли новый текст целиком.", id)
 		},
 		EditUpdated: func(id int64, preview string) string {
 			head := fmt.Sprintf("✏️ Заметка #%d обновлена. Прежний текст сохранён в истории.", id)
@@ -423,9 +448,8 @@ var locales = map[string]messages{
 			return head + "\n\n«" + preview + "»"
 		},
 		EditNotFound: func(find string) string {
-			return fmt.Sprintf("🔍 «%s» не найдено в заметке — ничего не изменено.", find)
+			return fmt.Sprintf("🔍 «%s» нет в заметке — ничего не изменено.", find)
 		},
-		EditUsage: "Пришли полный исправленный текст или замену вида «старое → новое».",
 		CardBody: func(id int64, when, text string, tags []string) string {
 			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
 			if len(tags) > 0 {

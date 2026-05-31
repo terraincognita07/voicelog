@@ -260,12 +260,15 @@ func (tb *Bot) cbVocabClearNo(c tele.Context) error {
 	return c.Respond()
 }
 
-// onText handles plain text messages. Two paths:
+// onText handles plain text messages. In priority order:
 //
-//  1. The /vocab "Add" force-reply: when the user replies to the prompt sent
-//     by cbVocabAddPrompt (ReplyTo points at a bot message whose text equals
-//     VocabAddPrompt), the reply is parsed as space-separated vocab terms.
-//  2. Otherwise the text is captured as a note — the typed-input counterpart
+//  1. The /vocab "Add" force-reply (reply to cbVocabAddPrompt's prompt) →
+//     parsed as space-separated vocab terms.
+//  2. The card "🏷 Add tags" force-reply → parsed as space-separated tags.
+//  3. A button-driven note edit in progress (the user tapped ✏️ → 🔤/📝) →
+//     the text is the new word / full text; see continueEdit in edit_note.go.
+//     Explicit force-replies (1, 2) win over this ambient state.
+//  4. Otherwise the text is captured as a note — the typed-input counterpart
 //     to a voice message, for when the user can't speak (meeting, quiet
 //     place). No whisper, no audio, no dedup; just store and saved-reply.
 //
@@ -279,11 +282,11 @@ func (tb *Bot) onText(c tele.Context) error {
 	if tb.isVocabAddReply(msg) {
 		return tb.handleVocabAddReply(c, msg)
 	}
-	if id, ok := tb.editReplyNoteID(msg); ok {
-		return tb.applyNoteEdit(c, id, msg.Text)
-	}
 	if id, ok := tb.tagAddReplyNoteID(msg); ok {
 		return tb.handleTagAddReply(c, id, msg.Text)
+	}
+	if pe := tb.currentEditState(); pe != nil {
+		return tb.continueEdit(msg, pe)
 	}
 	return tb.saveTextNote(c, msg)
 }
@@ -298,18 +301,6 @@ func (tb *Bot) isVocabAddReply(msg *tele.Message) bool {
 		return false
 	}
 	return strings.TrimSpace(msg.ReplyTo.Text) == tb.msg.VocabAddPrompt
-}
-
-// editReplyNoteID reports whether msg is a reply to an [✏️ Edit] force-reply
-// prompt and, if so, the note id it targets.
-func (tb *Bot) editReplyNoteID(msg *tele.Message) (int64, bool) {
-	if msg.ReplyTo == nil || msg.ReplyTo.Sender == nil || tb.bot.Me == nil {
-		return 0, false
-	}
-	if msg.ReplyTo.Sender.ID != tb.bot.Me.ID {
-		return 0, false
-	}
-	return tb.matchEditPrompt(strings.TrimSpace(msg.ReplyTo.Text))
 }
 
 func (tb *Bot) handleVocabAddReply(c tele.Context, msg *tele.Message) error {

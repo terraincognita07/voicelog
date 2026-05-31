@@ -158,41 +158,6 @@ func (tb *Bot) cbSavedFull(c tele.Context) error {
 	return c.Respond()
 }
 
-// cbEditPrompt handles [✏️ Edit] under a saved-note reply. It opens a
-// force-reply prompt carrying the note id; the user's reply is caught in
-// onText (via matchEditPrompt) and applied through applyNoteEdit. Using a
-// force-reply (rather than asking the user to type a command with the id)
-// keeps editing one tap + one message, the same shape as /vocab Add.
-func (tb *Bot) cbEditPrompt(c tele.Context) error {
-	cb := c.Callback()
-	if cb == nil {
-		return nil
-	}
-	id, err := strconv.ParseInt(strings.TrimSpace(cb.Data), 10, 64)
-	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
-	}
-	_ = c.Respond()
-	return c.Send(tb.msg.EditPrompt(id), &tele.ReplyMarkup{ForceReply: true, Selective: true})
-}
-
-// matchEditPrompt reports whether promptText is an edit force-reply prompt
-// and, if so, the note id it targets. It recovers the id by reading the
-// first run of digits in the text and confirming that re-rendering
-// EditPrompt(id) reproduces the exact prompt — locale-agnostic, and robust
-// as long as EditPrompt embeds the id as its only number (asserted in
-// TestLocalesAreComplete).
-func (tb *Bot) matchEditPrompt(promptText string) (int64, bool) {
-	id, ok := firstInt(promptText)
-	if !ok {
-		return 0, false
-	}
-	if tb.msg.EditPrompt(id) != promptText {
-		return 0, false
-	}
-	return id, true
-}
-
 // firstInt returns the first maximal run of ASCII digits in s as an int64.
 func firstInt(s string) (int64, bool) {
 	start := -1
@@ -213,68 +178,6 @@ func firstInt(s string) (int64, bool) {
 		return n, err == nil
 	}
 	return 0, false
-}
-
-// splitEdit detects a "find → replace" instruction in an edit reply. It
-// accepts a space-padded arrow / ASCII separator — so an arrow buried in a
-// full-text replacement ("x -> y") doesn't trip it — plus the bare Unicode
-// arrow (rare in journal prose). Returns (find, replacement, true) on a hit.
-func splitEdit(reply string) (find, repl string, ok bool) {
-	for _, sep := range []string{" → ", " -> ", " => ", "→"} {
-		if i := strings.Index(reply, sep); i >= 0 {
-			return strings.TrimSpace(reply[:i]), strings.TrimSpace(reply[i+len(sep):]), true
-		}
-	}
-	return "", "", false
-}
-
-// applyNoteEdit applies an edit reply to a note — two shapes behind one
-// ✏️ button:
-//   - "old → new"  → replace every occurrence of `old` with `new` in the
-//     current text (case-sensitive). Fixes one whisper-misheard word without
-//     retyping the whole transcript.
-//   - anything else → replace the whole text (the original behavior).
-//
-// Either way the previous text is archived to notes_history (recoverable at
-// the SQL level). An edit that can't apply (the `find` isn't present, or the
-// result would empty the note) reports back and changes nothing.
-func (tb *Bot) applyNoteEdit(c tele.Context, id int64, reply string) error {
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	newText := reply // default: full-text replacement
-	if find, repl, isReplace := splitEdit(reply); isReplace {
-		if find == "" {
-			return c.Send(tb.msg.EditUsage)
-		}
-		n, err := tb.db.GetNote(ctx, id)
-		if err != nil {
-			if errors.Is(err, db.ErrNoteNotFound) {
-				return c.Send(tb.msg.NotFound(id))
-			}
-			return tb.errReply(c, "edit note", err)
-		}
-		if !strings.Contains(n.RawText, find) {
-			return c.Send(tb.msg.EditNotFound(find))
-		}
-		newText = strings.ReplaceAll(n.RawText, find, repl)
-	}
-	if strings.TrimSpace(newText) == "" {
-		return c.Send(tb.msg.EditUsage)
-	}
-
-	if _, err := tb.db.ArchiveAndUpdateText(ctx, id, newText, "", db.NoteMeta{}); err != nil {
-		if errors.Is(err, db.ErrNoteNotFound) {
-			return c.Send(tb.msg.NotFound(id))
-		}
-		return tb.errReply(c, "edit note", err)
-	}
-	preview, truncated := tb.notePreviewAndTruncated(ctx, id, savedPreviewLen)
-	return c.Send(tb.msg.EditUpdated(id, preview), tb.savedMarkup(id, truncated))
 }
 
 // notePreviewAndTruncated returns the truncated preview AND whether

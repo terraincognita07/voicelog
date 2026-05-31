@@ -43,9 +43,9 @@ an MCP server you self-host.
   note's card. Shown `🏷` inline in the bot's lists.
 - **Russian-aware search** — Cyrillic queries are stemmed (Snowball) so
   searching `работа` also finds `работе`/`работу`; Latin terms stay exact.
-- **Fix what whisper misheard** — `✏️ Edit` any note right in Telegram: send
-  the full text or a quick `old → new` swap (previous version archived), or
-  have Claude `retranscribe` it.
+- **Fix what whisper misheard** — `✏️ Edit` any note right in Telegram: a
+  button menu walks you through replacing one word or rewriting the whole note
+  (previous version archived), or have Claude `retranscribe` it.
 - **Self-improving accuracy** — Claude can spot recurring names/jargon across
   the corpus and add them to the whisper vocabulary via MCP (`add_vocab`).
 - **Button-driven UI** — pending queue, day-grouped lists, status filters,

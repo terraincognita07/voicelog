@@ -22,7 +22,9 @@ import (
 //	[✏️ Edit] [🏷 Tags]
 //	[🗑 Delete] [⬅ To list]
 //
-// Editing reuses the saved-reply ✏️ force-reply (editBtn / cbEditPrompt).
+// Editing reuses the saved-reply ✏️ button (editBtn / cbEditOpen): it opens
+// the in-place edit menu, carrying this card's id:kind:state so the flow can
+// restore the exact card on cancel / after the edit lands.
 // Tags opens a sub-view with one [tag ❌] button each plus [➕ Add]. Deleting
 // confirms, then returns to the list. Every button carries a cardRef so the
 // flow can rebuild the exact originating list on the way back.
@@ -134,7 +136,7 @@ func (tb *Bot) renderCard(ctx context.Context, ref cardRef) (string, *tele.Reply
 	data := ref.encode()
 	edit := editBtn
 	edit.Text = tb.msg.EditBtn
-	edit.Data = strconv.FormatInt(ref.id, 10)
+	edit.Data = data // id:kind:state — the edit menu restores this exact view on cancel
 	tagsBtn := cardTagsBtn
 	tagsBtn.Text = tb.msg.CardTagsBtn
 	tagsBtn.Data = data
@@ -340,9 +342,9 @@ func (tb *Bot) cbCardTagAdd(c tele.Context) error {
 	return c.Send(tb.msg.TagAddPrompt(ref.id), &tele.ReplyMarkup{ForceReply: true, Selective: true})
 }
 
-// matchTagAddPrompt recovers the note id from a tag-add force-reply prompt,
-// mirroring matchEditPrompt: the id is the prompt's only number and a
-// re-render of TagAddPrompt(id) must reproduce the text exactly.
+// matchTagAddPrompt recovers the note id from a tag-add force-reply prompt:
+// the id is the prompt's only number and a re-render of TagAddPrompt(id) must
+// reproduce the text exactly (locale-agnostic, see firstInt).
 func (tb *Bot) matchTagAddPrompt(promptText string) (int64, bool) {
 	id, ok := firstInt(promptText)
 	if !ok {

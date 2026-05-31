@@ -2,200 +2,212 @@ package telegram
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
 	tele "gopkg.in/telebot.v3"
 )
 
-func TestMatchEditPrompt(t *testing.T) {
-	tb := newTestBot(t)
-
-	if id, ok := tb.matchEditPrompt(tb.msg.EditPrompt(42)); !ok || id != 42 {
-		t.Errorf("round-trip prompt should match id 42, got (%d, %v)", id, ok)
-	}
-	if _, ok := tb.matchEditPrompt("just some unrelated text"); ok {
-		t.Error("non-prompt text must not match")
-	}
-	// A string that contains a number but is NOT the rendered prompt.
-	if _, ok := tb.matchEditPrompt("note 42 something else entirely"); ok {
-		t.Error("text with a number but wrong shape must not match")
-	}
-}
-
-func TestApplyNoteEdit_UpdatesAndArchives(t *testing.T) {
-	tb := newTestBot(t)
-	ctx := context.Background()
-	id, err := tb.db.InsertNote(ctx, "оригинальный текст", 0)
-	if err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, id, "  исправленный текст  "); err != nil {
-		t.Fatalf("applyNoteEdit: %v", err)
-	}
-
-	n, err := tb.db.GetNote(ctx, id)
-	if err != nil {
-		t.Fatalf("get note: %v", err)
-	}
-	if n.RawText != "исправленный текст" {
-		t.Fatalf("text not updated/trimmed: %q", n.RawText)
-	}
-
-	// Old text archived to notes_history.
-	var archived string
-	if err := tb.db.QueryRowContext(ctx,
-		`SELECT raw_text FROM notes_history WHERE note_id = ? ORDER BY id DESC LIMIT 1`, id).
-		Scan(&archived); err != nil {
-		t.Fatalf("history lookup: %v", err)
-	}
-	if archived != "оригинальный текст" {
-		t.Fatalf("previous text not archived, got %q", archived)
-	}
-
-	sent, ok := fc.lastSent()
-	if !ok {
-		t.Fatal("expected a confirmation Send")
-	}
-	if len(sent.Opts) == 0 {
-		t.Fatal("confirmation should carry the saved-reply markup")
-	}
-	if _, isMarkup := sent.Opts[0].(*tele.ReplyMarkup); !isMarkup {
-		t.Fatalf("expected *tele.ReplyMarkup, got %T", sent.Opts[0])
-	}
-}
-
-func TestApplyNoteEdit_EmptyIsNoop(t *testing.T) {
-	tb := newTestBot(t)
-	ctx := context.Background()
-	id, _ := tb.db.InsertNote(ctx, "оригинал", 0)
-
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, id, "   "); err != nil {
-		t.Fatalf("applyNoteEdit: %v", err)
-	}
-	if _, ok := fc.lastSent(); ok {
-		t.Error("empty edit must not send anything")
-	}
-	n, _ := tb.db.GetNote(ctx, id)
-	if n.RawText != "оригинал" {
-		t.Errorf("empty edit must not change text, got %q", n.RawText)
-	}
-}
-
-func TestApplyNoteEdit_NotFound(t *testing.T) {
-	tb := newTestBot(t)
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, 99999, "new"); err != nil {
-		t.Fatalf("applyNoteEdit returned error (should send NotFound instead): %v", err)
-	}
-	sent, ok := fc.lastSent()
-	if !ok {
-		t.Fatal("expected a NotFound reply")
-	}
-	if !strings.Contains(sent.What.(string), "99999") {
-		t.Errorf("NotFound reply should mention the id, got %q", sent.What)
-	}
-}
-
-func TestSplitEdit(t *testing.T) {
+func TestEditOriginRoundTrip(t *testing.T) {
 	cases := []struct {
-		in, find, repl string
-		ok             bool
+		data  string
+		id    int64
+		kind  string
+		state string
+		ok    bool
 	}{
-		{"a → b", "a", "b", true},
-		{"a -> b", "a", "b", true},
-		{"a => b", "a", "b", true},
-		{"слово→другое", "слово", "другое", true},              // bare arrow, no spaces
-		{"x -> y inside -> z", "x", "y inside -> z", true},     // first separator wins
-		{"just full corrected text", "", "", false},            // no separator → full replace
-		{"arrow in prose x->y stays full text", "", "", false}, // unspaced ASCII isn't a separator
+		{"7", 7, "", "", true},           // saved-reply origin: bare id
+		{"7:r:", 7, "r", "", true},       // card origin, no list state
+		{"7:p:f~2", 7, "p", "f~2", true}, // card origin with list state
+		{"garbage", 0, "", "", false},
+		{"0", 0, "", "", false}, // non-positive id rejected
+		{"  ", 0, "", "", false},
 	}
 	for _, c := range cases {
-		find, repl, ok := splitEdit(c.in)
-		if ok != c.ok || find != c.find || repl != c.repl {
-			t.Errorf("splitEdit(%q) = (%q,%q,%v), want (%q,%q,%v)", c.in, find, repl, ok, c.find, c.repl, c.ok)
+		id, kind, state, ok := editOriginFromData(c.data)
+		if ok != c.ok || id != c.id || kind != c.kind || state != c.state {
+			t.Errorf("editOriginFromData(%q) = (%d,%q,%q,%v), want (%d,%q,%q,%v)",
+				c.data, id, kind, state, ok, c.id, c.kind, c.state, c.ok)
+		}
+		if c.ok {
+			if got := editOriginData(c.id, c.kind, c.state); got != c.data {
+				t.Errorf("editOriginData(%d,%q,%q) = %q, want %q", c.id, c.kind, c.state, got, c.data)
+			}
 		}
 	}
 }
 
-func TestApplyNoteEdit_FindReplace(t *testing.T) {
+func TestCbEditOpen_ShowsMenuInPlace(t *testing.T) {
+	tb := newTestBot(t)
+	id, _ := tb.db.InsertNote(context.Background(), "позвонить Коле завтра", 0)
+	fc := &fakeCtx{callback: &tele.Callback{Data: strconv.FormatInt(id, 10)}}
+
+	if err := tb.cbEditOpen(fc); err != nil {
+		t.Fatalf("cbEditOpen: %v", err)
+	}
+	ed, ok := fc.lastEdit()
+	if !ok {
+		t.Fatal("expected the message to be edited in place")
+	}
+	if _, sent := fc.lastSent(); sent {
+		t.Error("cbEditOpen must edit in place, not Send a new (dangling) message")
+	}
+	mk := markupOf(t, ed.Opts)
+	for _, want := range []string{tb.msg.EditReplaceBtn, tb.msg.EditFullBtn, tb.msg.DeleteNoBtn} {
+		if !markupHasButton(mk, want) {
+			t.Errorf("edit menu missing button %q", want)
+		}
+	}
+}
+
+func TestCbEditReplace_ArmsFindState(t *testing.T) {
+	tb := newTestBot(t)
+	id, _ := tb.db.InsertNote(context.Background(), "позвонить Коле завтра", 0)
+	fc := &fakeCtx{callback: &tele.Callback{Data: strconv.FormatInt(id, 10)}}
+
+	if err := tb.cbEditReplace(fc); err != nil {
+		t.Fatalf("cbEditReplace: %v", err)
+	}
+	pe := tb.currentEditState()
+	if pe == nil || pe.noteID != id || pe.step != editAwaitFind {
+		t.Fatalf("expected armed await-find state for note %d, got %+v", id, pe)
+	}
+	ed, ok := fc.lastEdit()
+	if !ok {
+		t.Fatal("expected an in-place edit to the find prompt")
+	}
+	if mk := markupOf(t, ed.Opts); !markupHasButton(mk, tb.msg.DeleteNoBtn) {
+		t.Error("the find prompt should offer ✗ Cancel")
+	}
+}
+
+func TestAdvanceEdit_FullRewrite(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "оригинальный текст", 0)
+	pe := &pendingEdit{noteID: id, step: editAwaitFull}
+
+	_, kb, done, err := tb.advanceEdit(ctx, pe, "  исправленный текст  ")
+	if err != nil {
+		t.Fatalf("advanceEdit: %v", err)
+	}
+	if !done {
+		t.Error("a full rewrite should finish the flow")
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "исправленный текст" {
+		t.Fatalf("text not updated/trimmed: %q", n.RawText)
+	}
+	assertArchived(t, tb, id, "оригинальный текст")
+	if !markupHasButton(kb, tb.msg.EditBtn) {
+		t.Error("restored view should carry the saved-reply 🗑/✏️ markup")
+	}
+}
+
+func TestAdvanceEdit_ReplaceFlow(t *testing.T) {
 	tb := newTestBot(t)
 	ctx := context.Background()
 	id, _ := tb.db.InsertNote(ctx, "позвонить Коле завтра", 0)
+	pe := &pendingEdit{noteID: id, step: editAwaitFind}
 
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, id, "Коле → Оле"); err != nil {
-		t.Fatalf("applyNoteEdit: %v", err)
+	// Step 1: which word to replace.
+	body, _, done, err := tb.advanceEdit(ctx, pe, "Коле")
+	if err != nil {
+		t.Fatalf("advanceEdit (find): %v", err)
 	}
-	n, _ := tb.db.GetNote(ctx, id)
-	if n.RawText != "позвонить Оле завтра" {
-		t.Fatalf("find→replace failed: %q", n.RawText)
+	if done {
+		t.Error("after the find word the flow should continue to the replacement")
 	}
-	var archived string
-	_ = tb.db.QueryRowContext(ctx,
-		`SELECT raw_text FROM notes_history WHERE note_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&archived)
-	if archived != "позвонить Коле завтра" {
-		t.Errorf("original not archived, got %q", archived)
+	if pe.step != editAwaitRepl || pe.find != "Коле" {
+		t.Fatalf("state not advanced to await-replacement: %+v", pe)
 	}
+	if !strings.Contains(body, "Коле") {
+		t.Errorf("replacement prompt should name the word, got %q", body)
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "позвонить Коле завтра" {
+		t.Fatalf("note must not change until the replacement is given: %q", n.RawText)
+	}
+
+	// Step 2: replace with what.
+	_, _, done, err = tb.advanceEdit(ctx, pe, "Оле")
+	if err != nil {
+		t.Fatalf("advanceEdit (repl): %v", err)
+	}
+	if !done {
+		t.Error("after the replacement the flow should finish")
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "позвонить Оле завтра" {
+		t.Fatalf("replace failed: %q", n.RawText)
+	}
+	assertArchived(t, tb, id, "позвонить Коле завтра")
 }
 
-func TestApplyNoteEdit_FindReplace_AllOccurrencesAsciiArrow(t *testing.T) {
-	tb := newTestBot(t)
-	ctx := context.Background()
-	id, _ := tb.db.InsertNote(ctx, "тест тест тест", 0)
-
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, id, "тест -> проба"); err != nil {
-		t.Fatalf("applyNoteEdit: %v", err)
-	}
-	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "проба проба проба" {
-		t.Fatalf("all-occurrences replace failed: %q", n.RawText)
-	}
-}
-
-func TestApplyNoteEdit_FindNotFound(t *testing.T) {
+func TestAdvanceEdit_FindNotInNote(t *testing.T) {
 	tb := newTestBot(t)
 	ctx := context.Background()
 	id, _ := tb.db.InsertNote(ctx, "исходный текст", 0)
+	pe := &pendingEdit{noteID: id, step: editAwaitFind}
 
-	fc := &fakeCtx{}
-	if err := tb.applyNoteEdit(fc, id, "отсутствует → замена"); err != nil {
-		t.Fatalf("applyNoteEdit: %v", err)
+	body, kb, done, err := tb.advanceEdit(ctx, pe, "отсутствует")
+	if err != nil {
+		t.Fatalf("advanceEdit: %v", err)
+	}
+	if !done {
+		t.Error("a missing word should end the step")
 	}
 	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "исходный текст" {
-		t.Errorf("not-found edit must not change text, got %q", n.RawText)
+		t.Errorf("note must not change when the word isn't found: %q", n.RawText)
 	}
-	sent, ok := fc.lastSent()
-	if !ok {
-		t.Fatal("expected a not-found reply")
+	if !strings.Contains(body, "отсутствует") {
+		t.Errorf("should name the missing word, got %q", body)
 	}
-	if !strings.Contains(sent.What.(string), "отсутствует") {
-		t.Errorf("reply should name the missing term, got %q", sent.What)
+	if !markupHasButton(kb, tb.msg.EditReplaceBtn) {
+		t.Error("should fall back to the edit menu so the user can retry or cancel")
 	}
 }
 
-func TestCbEditPrompt_SendsForceReply(t *testing.T) {
+func TestContinueEdit_AppliesAndClears(t *testing.T) {
 	tb := newTestBot(t)
-	fc := &fakeCtx{callback: &tele.Callback{Data: "7"}}
-	if err := tb.cbEditPrompt(fc); err != nil {
-		t.Fatalf("cbEditPrompt: %v", err)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "старый", 0)
+	pe := &pendingEdit{noteID: id, step: editAwaitFull}
+	tb.setEditState(pe)
+
+	// tb.bot is nil in tests, so the in-place edit / message delete are no-ops;
+	// the DB mutation and state cleanup are what we assert.
+	if err := tb.continueEdit(&tele.Message{Text: "новый"}, pe); err != nil {
+		t.Fatalf("continueEdit: %v", err)
 	}
-	sent, ok := fc.lastSent()
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "новый" {
+		t.Fatalf("text not updated: %q", n.RawText)
+	}
+	if tb.currentEditState() != nil {
+		t.Error("edit state must be cleared once the flow is done")
+	}
+}
+
+func TestCbEditCancel_RestoresAndClears(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "не трогать", 0)
+	tb.setEditState(&pendingEdit{noteID: id, step: editAwaitFind})
+	fc := &fakeCtx{callback: &tele.Callback{Data: strconv.FormatInt(id, 10)}}
+
+	if err := tb.cbEditCancel(fc); err != nil {
+		t.Fatalf("cbEditCancel: %v", err)
+	}
+	if tb.currentEditState() != nil {
+		t.Error("cancel must clear the edit state")
+	}
+	ed, ok := fc.lastEdit()
 	if !ok {
-		t.Fatal("expected a force-reply prompt Send")
+		t.Fatal("cancel should restore the note in place")
 	}
-	if !strings.Contains(sent.What.(string), "7") {
-		t.Errorf("prompt should mention note id 7, got %q", sent.What)
+	if mk := markupOf(t, ed.Opts); !markupHasButton(mk, tb.msg.EditBtn) {
+		t.Error("restored saved-reply should offer ✏️ again")
 	}
-	if len(sent.Opts) == 0 {
-		t.Fatal("prompt must carry a ForceReply markup")
-	}
-	mk, isMarkup := sent.Opts[0].(*tele.ReplyMarkup)
-	if !isMarkup || !mk.ForceReply {
-		t.Fatalf("expected ForceReply markup, got %#v", sent.Opts[0])
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "не трогать" {
+		t.Errorf("cancel must not change the note: %q", n.RawText)
 	}
 }
 
@@ -211,6 +223,20 @@ func TestSavedMarkup_OffersDeleteAndEdit(t *testing.T) {
 	}
 }
 
+// --- helpers --------------------------------------------------------------
+
+func markupOf(t *testing.T, opts []interface{}) *tele.ReplyMarkup {
+	t.Helper()
+	if len(opts) == 0 {
+		t.Fatal("no reply markup in opts")
+	}
+	mk, ok := opts[0].(*tele.ReplyMarkup)
+	if !ok {
+		t.Fatalf("expected *tele.ReplyMarkup, got %T", opts[0])
+	}
+	return mk
+}
+
 func markupHasButton(mk *tele.ReplyMarkup, text string) bool {
 	for _, row := range mk.InlineKeyboard {
 		for _, b := range row {
@@ -220,4 +246,16 @@ func markupHasButton(mk *tele.ReplyMarkup, text string) bool {
 		}
 	}
 	return false
+}
+
+func assertArchived(t *testing.T, tb *Bot, id int64, want string) {
+	t.Helper()
+	var got string
+	if err := tb.db.QueryRowContext(context.Background(),
+		`SELECT raw_text FROM notes_history WHERE note_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&got); err != nil {
+		t.Fatalf("history lookup: %v", err)
+	}
+	if got != want {
+		t.Fatalf("archived text = %q, want %q", got, want)
+	}
 }

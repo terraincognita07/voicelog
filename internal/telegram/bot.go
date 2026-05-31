@@ -63,6 +63,12 @@ type Bot struct {
 	// spammer can't fill the disk with one log line per attempt.
 	rejectLog   map[int64]time.Time
 	rejectLogMu sync.Mutex
+
+	// editState is the in-flight button-driven note edit, if any. The bot is
+	// single-user (gated by allowOnly), so one slot is enough — a second ✏️
+	// simply replaces it. nil means no edit is in progress. Guarded by editMu.
+	editState *pendingEdit
+	editMu    sync.Mutex
 }
 
 // rejectLogWindow is the per-user cool-down between rejection warnings.
@@ -164,7 +170,10 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&deleteYesBtn, tb.cbDeleteYes)
 	tb.bot.Handle(&deleteNoBtn, tb.cbDeleteNo)
 	tb.bot.Handle(&savedFullBtn, tb.cbSavedFull)
-	tb.bot.Handle(&editBtn, tb.cbEditPrompt)
+	tb.bot.Handle(&editBtn, tb.cbEditOpen)
+	tb.bot.Handle(&editReplaceBtn, tb.cbEditReplace)
+	tb.bot.Handle(&editFullBtn, tb.cbEditFull)
+	tb.bot.Handle(&editCancelBtn, tb.cbEditCancel)
 	tb.bot.Handle(&openCardBtn, tb.cbOpenCard)
 	tb.bot.Handle(&cardTagsBtn, tb.cbCardTags)
 	tb.bot.Handle(&cardTagsBackBtn, tb.cbCardTagsBack)
