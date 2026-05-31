@@ -22,7 +22,7 @@ queue, no background workers beyond a few goroutines, no caches, no ORM.
   No auth, internal compose network only.
 - **bot** — long-polls Telegram, downloads voice messages, runs ffmpeg →
   whisper, persists transcriptions, owns audio retention copy step.
-- **mcp** — HTTP server exposing 9 tools to Claude. Bearer-token auth.
+- **mcp** — HTTP server exposing 15 tools to Claude. Bearer-token auth.
   Runs the DB maintenance loop (weekly WAL checkpoint + monthly VACUUM).
 
 ## Code layout
