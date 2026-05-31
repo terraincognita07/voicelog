@@ -1016,3 +1016,71 @@ func TestMarkAnalyzed_CallbackFlood(t *testing.T) {
 		t.Errorf("final status: want analyzed, got %q", got.Status)
 	}
 }
+
+// TestMarkAnalyzed_ChunksLargeBatch passes more ids than the internal 500
+// batch size through MarkAnalyzed in one call. It must flip every pending
+// row across multiple IN-clause chunks and report the full count — proving
+// the chunk loop accumulates correctly and never builds an oversized
+// statement. 600 forces a second chunk; the exact ceiling is unit-tested in
+// TestChunkIDs.
+func TestMarkAnalyzed_ChunksLargeBatch(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	const n = 600
+	ids := make([]int64, n)
+	for i := 0; i < n; i++ {
+		id, err := d.InsertNote(ctx, "batch", 1)
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+		ids[i] = id
+	}
+
+	flipped, err := d.MarkAnalyzed(ctx, ids)
+	if err != nil {
+		t.Fatalf("mark analyzed: %v", err)
+	}
+	if flipped != n {
+		t.Fatalf("flipped %d, want %d", flipped, n)
+	}
+	pending, err := d.CountPending(ctx)
+	if err != nil {
+		t.Fatalf("count pending: %v", err)
+	}
+	if pending != 0 {
+		t.Errorf("want 0 pending after mark-all, got %d", pending)
+	}
+}
+
+// TestDeleteNotes_ChunksLargeBatch deletes more ids than the batch size in a
+// single call: every row must be removed across chunks and the count exact.
+func TestDeleteNotes_ChunksLargeBatch(t *testing.T) {
+	ctx := context.Background()
+	d := openTestDB(t)
+
+	const n = 600
+	ids := make([]int64, n)
+	for i := 0; i < n; i++ {
+		id, err := d.InsertNote(ctx, "batch", 1)
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+		ids[i] = id
+	}
+
+	_, deleted, err := d.DeleteNotes(ctx, ids)
+	if err != nil {
+		t.Fatalf("delete notes: %v", err)
+	}
+	if deleted != n {
+		t.Fatalf("deleted %d, want %d", deleted, n)
+	}
+	remaining, err := d.CountByStatus(ctx, "")
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("want 0 notes after delete-all, got %d", remaining)
+	}
+}

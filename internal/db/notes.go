@@ -66,6 +66,48 @@ var (
 // (memory blow-up if an MCP client supplies an extremely wide window).
 const MaxNotesInRange = 500
 
+// maxBatchIDs bounds how many ids go into a single IN-clause. SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER is 32766 on current builds (and was 999 on
+// pre-3.32 ones); chunking comfortably below the lower bound lets the batch
+// mutators (MarkAnalyzed, DeleteNotes) accept an arbitrarily long caller-
+// supplied id list without tripping "too many SQL variables". Chunks run in
+// autocommit, matching the pre-chunking (non-transactional) behavior — a
+// freak mid-batch failure can leave earlier chunks applied, exactly as a
+// single oversized statement could partially fail. Not a concern for the id
+// counts a personal journal realistically produces.
+const maxBatchIDs = 500
+
+// chunkIDs splits ids into consecutive batches of at most size. Returns nil
+// for empty input; size < 1 is treated as 1.
+func chunkIDs(ids []int64, size int) [][]int64 {
+	if size < 1 {
+		size = 1
+	}
+	var out [][]int64
+	for i := 0; i < len(ids); i += size {
+		end := i + size
+		if end > len(ids) {
+			end = len(ids)
+		}
+		out = append(out, ids[i:end])
+	}
+	return out
+}
+
+// idPlaceholders builds the "?,?,…,?" fragment and the matching []any of bind
+// values for an IN-clause over ids. Callers splice the fragment into the SQL
+// and pass the args through Exec/Query, so no id ever reaches the query
+// string. ids must be non-empty.
+func idPlaceholders(ids []int64) (string, []any) {
+	marks := strings.Repeat("?,", len(ids))
+	marks = marks[:len(marks)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return marks, args
+}
+
 // InsertNote inserts a note without any quality metadata — older
 // callsites and tests that don't have segment info should use this
 // path. The confidence_* columns stay NULL and suspect_hallucination is 0.
@@ -285,28 +327,30 @@ func (db *DB) DeleteNotes(ctx context.Context, ids []int64) ([]string, int, erro
 	if len(ids) == 0 {
 		return nil, 0, nil
 	}
-	// placeholders = "?,?,?" built from len(ids) — no user input is
-	// interpolated into the SQL. Values go through args... so SQLite binds
-	// them parameterized.
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
+	var paths []string
+	total := 0
+	// Chunk so an arbitrarily long id list stays under SQLite's bind-variable
+	// limit. Per chunk we read the audio paths first, then delete; a chunk's
+	// paths are appended only after its DELETE succeeds, so the returned list
+	// never names a row that is still present.
+	for _, chunk := range chunkIDs(ids, maxBatchIDs) {
+		marks, args := idPlaceholders(chunk)
+		chunkPaths, err := collectAudioPaths(ctx, db,
+			fmt.Sprintf(`SELECT audio_path FROM notes WHERE audio_path IS NOT NULL AND id IN (%s)`, marks), // nosemgrep
+			args)
+		if err != nil {
+			return paths, total, err
+		}
+		res, err := db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM notes WHERE id IN (%s)`, marks), args...) // nosemgrep
+		if err != nil {
+			return paths, total, err
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
+		paths = append(paths, chunkPaths...)
 	}
-	paths, err := collectAudioPaths(ctx, db,
-		fmt.Sprintf(`SELECT audio_path FROM notes WHERE audio_path IS NOT NULL AND id IN (%s)`, placeholders), // nosemgrep
-		args)
-	if err != nil {
-		return nil, 0, err
-	}
-	res, err := db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM notes WHERE id IN (%s)`, placeholders), args...) // nosemgrep
-	if err != nil {
-		return nil, 0, err
-	}
-	n, _ := res.RowsAffected()
-	return paths, int(n), nil
+	return paths, total, nil
 }
 
 // DeleteAllPending permanently removes every pending note in one statement.
@@ -360,21 +404,22 @@ func (db *DB) MarkAnalyzed(ctx context.Context, ids []int64) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	// Same batch-IN pattern as DeleteNotes: placeholders is built
-	// from len(ids), values go through ExecContext args parameterized.
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
-	q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status = 'pending' AND id IN (%s)`, placeholders) // nosemgrep
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
+	total := 0
+	for _, chunk := range chunkIDs(ids, maxBatchIDs) {
+		marks, args := idPlaceholders(chunk)
+		// status = 'pending' source filter keeps this idempotent under a
+		// callback storm (see TestMarkAnalyzed_CallbackFlood); placeholders
+		// are built from len(chunk), values bind via args — no user input
+		// reaches the SQL string.
+		q := fmt.Sprintf(`UPDATE notes SET status = 'analyzed' WHERE status = 'pending' AND id IN (%s)`, marks) // nosemgrep
+		res, err := db.ExecContext(ctx, q, args...)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
 	}
-	res, err := db.ExecContext(ctx, q, args...)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	return total, nil
 }
 
 // queryNotes is the shared row-scanning helper for the list/range
