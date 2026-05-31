@@ -58,7 +58,7 @@ func registerTagNote(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 				return mcpsdk.NewToolResultError(fmt.Sprintf("note %d not found", int64(idF))), nil
 			}
 			logger.Error("tag_note", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("tag_note"), nil
 		}
 		return jsonResult(map[string]int{"added": n})
 	})
@@ -94,7 +94,7 @@ func registerUntagNote(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		ok, err := store.RemoveTag(ctx, int64(idF), tag)
 		if err != nil {
 			logger.Error("untag_note", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("untag_note"), nil
 		}
 		return jsonResult(map[string]bool{"removed": ok})
 	})
@@ -117,7 +117,7 @@ func registerListTags(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		tags, err := store.ListTags(ctx)
 		if err != nil {
 			logger.Error("list_tags", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("list_tags"), nil
 		}
 		return jsonResult(tags)
 	})
@@ -155,7 +155,7 @@ func registerNotesByTag(s *server.MCPServer, store *db.DB, logger *slog.Logger) 
 		notes, err := store.NotesByTag(ctx, tag, limit)
 		if err != nil {
 			logger.Error("notes_by_tag", "tag", tag, "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("notes_by_tag"), nil
 		}
 		out := make([]mcpNote, len(notes))
 		for i, n := range notes {

@@ -237,8 +237,10 @@ func TestListPendingNotes_PropagatesDBClosed(t *testing.T) {
 	_ = f.store.Close()
 	tcr := callTool(t, f, "list_pending_notes", map[string]any{"limit": 5})
 	msg := expectToolError(t, tcr)
-	if msg == "" {
-		t.Errorf("expected non-empty error from a closed DB")
+	// Sanitized (#2): the raw "sql: database is closed" must not reach the
+	// caller — only the generic "<op> failed — see server logs" form does.
+	if !strings.Contains(msg, "see server logs") {
+		t.Errorf("closed-DB error must be sanitized, got %q", msg)
 	}
 }
 
@@ -247,6 +249,9 @@ func TestSearchNotes_PropagatesDBClosed(t *testing.T) {
 	_ = f.store.Close()
 	tcr := callTool(t, f, "search_notes", map[string]any{"query": "anything"})
 	msg := expectToolError(t, tcr)
+	// search_notes is the documented exception to #2: its errors (FTS5 query
+	// syntax, or a closed DB here) surface verbatim so the caller can fix the
+	// query. Assert only that a non-empty error came back.
 	if msg == "" {
 		t.Errorf("expected non-empty error from a closed DB")
 	}
@@ -257,8 +262,10 @@ func TestMarkAnalyzed_PropagatesDBClosed(t *testing.T) {
 	_ = f.store.Close()
 	tcr := callTool(t, f, "mark_analyzed", map[string]any{"ids": []any{1}})
 	msg := expectToolError(t, tcr)
-	if msg == "" {
-		t.Errorf("expected non-empty error from a closed DB")
+	// Sanitized (#2): the raw "sql: database is closed" must not reach the
+	// caller — only the generic "<op> failed — see server logs" form does.
+	if !strings.Contains(msg, "see server logs") {
+		t.Errorf("closed-DB error must be sanitized, got %q", msg)
 	}
 }
 
@@ -267,7 +274,27 @@ func TestDBHealth_PropagatesDBClosed(t *testing.T) {
 	_ = f.store.Close()
 	tcr := callTool(t, f, "db_health", nil)
 	msg := expectToolError(t, tcr)
+	// Sanitized (#2): the raw "sql: database is closed" must not reach the
+	// caller — only the generic "<op> failed — see server logs" form does.
+	if !strings.Contains(msg, "see server logs") {
+		t.Errorf("closed-DB error must be sanitized, got %q", msg)
+	}
+}
+
+// TestSearchNotes_FTS5ErrorSurfacesVerbatim proves the documented exception
+// to #2: a malformed FTS5 MATCH is the caller's own query problem (no path /
+// schema leak), so search_notes returns it verbatim — NOT the generic
+// "see server logs" — so the caller can fix the syntax. A trailing boolean
+// operator is a reliable FTS5 syntax error.
+func TestSearchNotes_FTS5ErrorSurfacesVerbatim(t *testing.T) {
+	f := newFixture(t)
+	seedNote(t, f.store, time.Now(), "anything to index")
+	tcr := callTool(t, f, "search_notes", map[string]any{"query": "foo AND"})
+	msg := expectToolError(t, tcr)
+	if strings.Contains(msg, "see server logs") {
+		t.Errorf("FTS5 query error must reach the caller verbatim, got sanitized: %q", msg)
+	}
 	if msg == "" {
-		t.Errorf("expected non-empty error from a closed DB")
+		t.Errorf("expected a non-empty FTS5 error message")
 	}
 }

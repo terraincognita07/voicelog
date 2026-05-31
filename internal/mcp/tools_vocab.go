@@ -44,7 +44,7 @@ func registerListVocab(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		terms, err := store.ListVocab(ctx)
 		if err != nil {
 			logger.Error("list_vocab", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("list_vocab"), nil
 		}
 		return jsonResult(map[string]any{"terms": terms, "count": len(terms)})
 	})
@@ -86,7 +86,7 @@ func registerAddVocab(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 			ok, aerr := store.AddVocab(ctx, t)
 			if aerr != nil {
 				logger.Error("add_vocab", "err", aerr)
-				return mcpsdk.NewToolResultError(aerr.Error()), nil
+				return opFailed("add_vocab"), nil
 			}
 			if ok {
 				added++
@@ -125,7 +125,7 @@ func registerRemoveVocab(s *server.MCPServer, store *db.DB, logger *slog.Logger)
 		removed, rerr := store.RemoveVocab(ctx, term)
 		if rerr != nil {
 			logger.Error("remove_vocab", "err", rerr)
-			return mcpsdk.NewToolResultError(rerr.Error()), nil
+			return opFailed("remove_vocab"), nil
 		}
 		return jsonResult(map[string]bool{"removed": removed})
 	})

@@ -48,7 +48,7 @@ func registerDBHealth(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		rep, err := store.Health(ctx, quick)
 		if err != nil {
 			logger.Error("db_health", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("db_health"), nil
 		}
 		return jsonResult(rep)
 	})
@@ -75,7 +75,7 @@ func registerListPending(s *server.MCPServer, store *db.DB, logger *slog.Logger)
 		notes, err := store.ListPending(ctx, limit)
 		if err != nil {
 			logger.Error("list_pending_notes", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("list_pending_notes"), nil
 		}
 		out := make([]mcpNote, len(notes))
 		for i, n := range notes {
@@ -140,7 +140,7 @@ func registerGetRange(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		notes, err := store.GetNotesInRange(ctx, from, to, status, limit)
 		if err != nil {
 			logger.Error("get_notes_in_range", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("get_notes_in_range"), nil
 		}
 		out := make([]mcpNote, len(notes))
 		for i, n := range notes {
@@ -189,6 +189,11 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		hits, err := store.SearchNotes(ctx, query, limit)
 		if err != nil {
 			logger.Error("search_notes", "query", query, "err", err)
+			// Documented exception to opFailed (#2): a search failure is
+			// almost always a malformed FTS5 MATCH — an error about the
+			// caller's own query, not internal state, with no DB path or
+			// schema in it. Returning it verbatim lets the caller fix its
+			// query syntax instead of guessing from a generic message.
 			return mcpsdk.NewToolResultError(err.Error()), nil
 		}
 		out := make([]mcpNote, len(hits))
@@ -231,7 +236,7 @@ func registerGetNote(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 				return mcpsdk.NewToolResultError(fmt.Sprintf("note %d not found", int64(idF))), nil
 			}
 			logger.Error("get_note", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("get_note"), nil
 		}
 		m := toMCP(n)
 		if tags, terr := store.TagsForNote(ctx, n.ID); terr != nil {

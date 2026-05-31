@@ -171,3 +171,15 @@ func jsonResult(v any) (*mcpsdk.CallToolResult, error) {
 	}
 	return mcpsdk.NewToolResultText(string(b)), nil
 }
+
+// opFailed returns a generic, path-free MCP error for an internal failure.
+// The caller has already logged the raw error (with its own structured
+// fields) via logger.Error; this mirrors the bot's userErrMsg policy so a
+// raw store error — which can carry SQL text or the DB file path — doesn't
+// transit the MCP response stream even to a trusted token holder. The
+// operator reads the detail from the server log. Validation / not-found
+// errors are returned verbatim by their call sites instead: those describe
+// the caller's own input and leak nothing internal.
+func opFailed(op string) *mcpsdk.CallToolResult {
+	return mcpsdk.NewToolResultError(op + " failed — see server logs")
+}

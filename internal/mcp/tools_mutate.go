@@ -41,7 +41,7 @@ func registerMarkAnalyzed(s *server.MCPServer, store *db.DB, logger *slog.Logger
 		n, err := store.MarkAnalyzed(ctx, ids)
 		if err != nil {
 			logger.Error("mark_analyzed", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("mark_analyzed"), nil
 		}
 		return jsonResult(map[string]int{"updated": n})
 	})
@@ -73,7 +73,7 @@ func registerDeleteNotes(s *server.MCPServer, store *db.DB, audioDir string, log
 		paths, n, err := store.DeleteNotes(ctx, ids)
 		if err != nil {
 			logger.Error("delete_notes", "err", err)
-			return mcpsdk.NewToolResultError(err.Error()), nil
+			return opFailed("delete_notes"), nil
 		}
 		// Best-effort on-disk cleanup; never fails the tool over a stuck file.
 		for _, p := range paths {
