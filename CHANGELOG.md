@@ -9,6 +9,8 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-31
+
 ### Added
 
 - **Replace-a-word can target one occurrence of many.** When the word or phrase
@@ -19,6 +21,11 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   was rewritten with no way to pick. A single match goes straight to the
   replacement as before. The list is capped at 6 matches (beyond that, only
   `Replace all`).
+
+### Changed
+
+- **MCP `serverVersion` bumped `0.6.0` → `0.7.0`** to track the release tag
+  (RELEASING.md step 8). No MCP behavior change this release.
 
 ### Fixed
 
