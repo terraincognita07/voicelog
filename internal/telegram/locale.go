@@ -54,10 +54,13 @@ type messages struct {
 	EditReplaceBtn     string                                                  // [🔤 Replace a word] in the edit menu
 	EditFullBtn        string                                                  // [📝 Rewrite all] in the edit menu
 	EditAskFind        func(id int64) string                                   // prompt: which word/phrase to replace
-	EditAskReplace     func(find string) string                                // prompt: replace «find» with what
+	EditAskReplace     func(find string, n int) string                         // prompt: replace «find» with what (n = occurrence count; >1 → "replace all")
 	EditAskFull        func(id int64) string                                   // prompt: send the full corrected text
 	EditUpdated        func(id int64, preview string) string                   // confirmation header after the text is replaced
 	EditNotFound       func(find string) string                                // the "find" word wasn't in the note
+	EditPickHeader     func(find string, n int, more bool) string              // header for the replace picker when find matches >1 (more = list truncated)
+	EditPickAllBtn     string                                                  // [Replace all] button in the picker
+	EditExpired        string                                                  // toast when a picker tap lands after the in-memory edit was lost
 	CardBody           func(id int64, when, text string, tags []string) string // note-card detail body
 	CardTagsBtn        string                                                  // [🏷 Tags] on the card
 	CardToListBtn      string                                                  // [⬅ to list] on the card
@@ -211,7 +214,10 @@ var locales = map[string]messages{
 		EditAskFind: func(id int64) string {
 			return fmt.Sprintf("🔤 Note #%d — which word or phrase should I replace?", id)
 		},
-		EditAskReplace: func(find string) string {
+		EditAskReplace: func(find string, n int) string {
+			if n > 1 {
+				return fmt.Sprintf("🔤 «%s» appears %d times. Send the new text — I'll replace all of them.", find, n)
+			}
 			return fmt.Sprintf("🔤 Replace «%s» with what? Send the new text.", find)
 		},
 		EditAskFull: func(id int64) string {
@@ -227,6 +233,14 @@ var locales = map[string]messages{
 		EditNotFound: func(find string) string {
 			return fmt.Sprintf("🔍 «%s» is not in the note — nothing changed.", find)
 		},
+		EditPickHeader: func(find string, n int, more bool) string {
+			if more {
+				return fmt.Sprintf("🔤 «%s» appears many times — first %d shown. Tap one, or Replace all:", find, n)
+			}
+			return fmt.Sprintf("🔤 «%s» appears more than once — tap the one to replace, or Replace all:", find)
+		},
+		EditPickAllBtn: "Replace all",
+		EditExpired:    "This edit expired — tap ✏️ to start again.",
 		CardBody: func(id int64, when, text string, tags []string) string {
 			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
 			if len(tags) > 0 {
@@ -434,7 +448,10 @@ var locales = map[string]messages{
 		EditAskFind: func(id int64) string {
 			return fmt.Sprintf("🔤 Заметка #%d — какое слово или фразу заменить?", id)
 		},
-		EditAskReplace: func(find string) string {
+		EditAskReplace: func(find string, n int) string {
+			if n > 1 {
+				return fmt.Sprintf("🔤 «%s» встречается несколько раз (%d). Пришли новый текст — заменю все вхождения.", find, n)
+			}
 			return fmt.Sprintf("🔤 Заменить «%s» на что? Пришли новый текст.", find)
 		},
 		EditAskFull: func(id int64) string {
@@ -450,6 +467,14 @@ var locales = map[string]messages{
 		EditNotFound: func(find string) string {
 			return fmt.Sprintf("🔍 «%s» нет в заметке — ничего не изменено.", find)
 		},
+		EditPickHeader: func(find string, n int, more bool) string {
+			if more {
+				return fmt.Sprintf("🔤 «%s» встречается много раз — показаны первые %d. Тапни одно или «Заменить все»:", find, n)
+			}
+			return fmt.Sprintf("🔤 «%s» встречается несколько раз — тапни нужное или «Заменить все»:", find)
+		},
+		EditPickAllBtn: "Заменить все",
+		EditExpired:    "Правка устарела — нажми ✏️, чтобы начать заново.",
 		CardBody: func(id int64, when, text string, tags []string) string {
 			out := fmt.Sprintf("📝 #%d · %s\n\n«%s»", id, when, text)
 			if len(tags) > 0 {

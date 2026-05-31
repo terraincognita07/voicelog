@@ -265,6 +265,8 @@ func (tb *Bot) cbCardDeleteAsk(c tele.Context) error {
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
+	// Pivot away from any half-finished edit (see cbCardTagAdd / cbDeleteAsk).
+	tb.clearEditState()
 	data := ref.encode()
 	yes := cardDeleteYesBtn
 	yes.Text = tb.msg.DeleteYesBtn
@@ -338,6 +340,10 @@ func (tb *Bot) cbCardTagAdd(c tele.Context) error {
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
+	// Opening a tag prompt is an explicit pivot: abandon any half-finished
+	// edit so its in-memory editState can't later swallow this reply (or a
+	// subsequent message) as an edit answer. Same rule as a fresh ✏️.
+	tb.clearEditState()
 	_ = c.Respond()
 	return c.Send(tb.msg.TagAddPrompt(ref.id), &tele.ReplyMarkup{ForceReply: true, Selective: true})
 }

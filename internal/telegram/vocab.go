@@ -206,6 +206,9 @@ func (tb *Bot) cbVocabRemove(c tele.Context) error {
 }
 
 func (tb *Bot) cbVocabAddPrompt(c tele.Context) error {
+	// Opening the vocab prompt abandons any half-finished edit — same pivot
+	// rule as the tag-add prompt and a fresh ✏️ (see cbCardTagAdd).
+	tb.clearEditState()
 	_ = c.Respond()
 	return c.Send(tb.msg.VocabAddPrompt, &tele.ReplyMarkup{ForceReply: true, Selective: true})
 }

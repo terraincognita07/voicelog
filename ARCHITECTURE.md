@@ -83,14 +83,17 @@ Reading order:
    `/help`, `/delete`.
 2. `errors.go` — sanitization layer (`userErrMsg`, `errReply`, `errToast`).
 3. `saved_reply.go` — what the user sees after recording a voice (delete
-   confirm, find→replace `✏️ Edit`, show-full).
-4. `list_view.go` — `/pending` and `/recent`. State encoding, day grouping,
+   confirm, the `✏️`/`🗑` saved-reply markup, show-full).
+4. `edit_note.go` — the `✏️ Edit` flow shared by the saved reply and the note
+   card: in-place menu, replace-a-word (with an occurrence picker when the word
+   matches more than once), rewrite-all, and the in-memory `editState` slot.
+5. `list_view.go` — `/pending` and `/recent`. State encoding, day grouping,
    filter chips, "Show more" pagination, mass-delete confirm. Each note's
    `[#id]` button opens its card.
-5. `note_card.go` — the single-note card (edit / tag / delete) opened from a
+6. `note_card.go` — the single-note card (edit / tag / delete) opened from a
    list, plus manual tag add/remove; `cardRef` callback encoding.
-6. `vocab.go` — `/vocab` interactive editor with force-reply add prompt.
-7. `locale.go` — every user-facing string in en + ru.
+7. `vocab.go` — `/vocab` interactive editor with force-reply add prompt.
+8. `locale.go` — every user-facing string in en + ru.
 
 All inline-keyboard views thread their full state through callback `Data`
 fields (capped at 64 bytes by Telegram). A unit test asserts the worst-case

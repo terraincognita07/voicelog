@@ -89,14 +89,29 @@ func TestLocalesAreComplete(t *testing.T) {
 			if m.EditAskFull == nil || m.EditAskFull(42) == "" || !strings.Contains(m.EditAskFull(42), "42") {
 				t.Error("EditAskFull missing, empty, or does not contain the id")
 			}
-			if m.EditAskReplace == nil || m.EditAskReplace("кот") == "" || !strings.Contains(m.EditAskReplace("кот"), "кот") {
+			if m.EditAskReplace == nil || m.EditAskReplace("кот", 1) == "" || !strings.Contains(m.EditAskReplace("кот", 1), "кот") {
 				t.Error("EditAskReplace missing, empty, or drops the find term")
+			}
+			if multi := m.EditAskReplace("кот", 3); !strings.Contains(multi, "кот") || !strings.Contains(multi, "3") {
+				t.Error("EditAskReplace(n>1) should name the find term and the occurrence count")
 			}
 			if m.EditUpdated == nil || m.EditUpdated(1, "x") == "" || m.EditUpdated(1, "") == "" {
 				t.Error("EditUpdated missing or returns empty")
 			}
 			if m.EditNotFound == nil || m.EditNotFound("x") == "" {
 				t.Error("EditNotFound missing or returns empty")
+			}
+			if m.EditPickHeader == nil || m.EditPickHeader("кот", 2, false) == "" || !strings.Contains(m.EditPickHeader("кот", 2, false), "кот") {
+				t.Error("EditPickHeader missing, empty, or drops the find term")
+			}
+			if m.EditPickHeader("кот", 6, true) == "" || !strings.Contains(m.EditPickHeader("кот", 6, true), "6") {
+				t.Error("EditPickHeader(more) should name the shown count")
+			}
+			if m.EditPickAllBtn == "" {
+				t.Error("EditPickAllBtn missing")
+			}
+			if m.EditExpired == "" {
+				t.Error("EditExpired missing")
 			}
 			if m.CardBody == nil || m.CardBody(1, "when", "text", nil) == "" || m.CardBody(1, "when", "text", []string{"a"}) == "" {
 				t.Error("CardBody missing or returns empty")

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -22,11 +23,12 @@ import (
 //	[🔤 Replace a word] [📝 Rewrite all]
 //	[✗ Cancel]
 //
-// 🔤 asks two plain questions (which word → with what); 📝 asks for the whole
-// new text. The typed answers are caught by continueEdit (via onText's
-// editState check), applied through db.ArchiveAndUpdateText (previous text
-// kept in notes_history), and the note message is updated in place. The
-// user's typed messages are deleted so the chat stays clean.
+// 🔤 asks which word → with what; when that word matches more than once an
+// occurrence picker (editAwaitPick) lets the user replace just one or all.
+// 📝 asks for the whole new text. The typed answers are caught by continueEdit
+// (via onText's editState check), applied through db.ArchiveAndUpdateText
+// (previous text kept in notes_history), and the note message is updated in
+// place. The user's typed messages are deleted so the chat stays clean.
 //
 // State is a single in-memory slot on the Bot (the bot is single-user); a
 // second ✏️ supersedes any half-finished edit, and a bot restart simply drops
@@ -36,6 +38,7 @@ var (
 	editReplaceBtn = tele.InlineButton{Unique: "edit_repl"}   // 🔤 replace a word/phrase
 	editFullBtn    = tele.InlineButton{Unique: "edit_full"}   // 📝 rewrite the whole text
 	editCancelBtn  = tele.InlineButton{Unique: "edit_cancel"} // ✗ cancel, restore the note
+	editPickBtn    = tele.InlineButton{Unique: "edit_pick"}   // ‹n›/all occurrence picker for Replace
 )
 
 // editStep marks which typed answer the flow is waiting for.
@@ -44,6 +47,7 @@ type editStep int
 const (
 	editAwaitFull editStep = iota + 1 // the whole new text
 	editAwaitFind                     // the word/phrase to find
+	editAwaitPick                     // which occurrence (or all) to replace, when find matches >1
 	editAwaitRepl                     // what to replace `find` with
 )
 
@@ -55,7 +59,8 @@ type pendingEdit struct {
 	kind    string // "" = saved-reply origin; "p"/"r" = card origin (list to restore)
 	state   string // originating list's encoded state (card origin only)
 	step    editStep
-	find    string        // captured "old" term once step == editAwaitRepl
+	find    string        // captured "old" term once step >= editAwaitPick
+	pickIdx int           // chosen occurrence for Replace: -1 = all (default); >=0 = that 0-based match
 	menuMsg tele.Editable // the note message to edit in place
 }
 
@@ -311,25 +316,43 @@ func (tb *Bot) advanceEdit(ctx context.Context, pe *pendingEdit, text string) (s
 		if err != nil {
 			return "", nil, false, err
 		}
-		if !strings.Contains(n.RawText, text) {
+		cnt := strings.Count(n.RawText, text)
+		if cnt == 0 {
 			// Not there — back to the menu with a short note; user retries or cancels.
 			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(text))
 			return body, kb, true, err
 		}
 		pe.find = text
-		pe.step = editAwaitRepl
-		return tb.msg.EditAskReplace(text), tb.cancelKB(editOriginData(pe.noteID, pe.kind, pe.state)), false, nil
+		if cnt == 1 {
+			// Unambiguous — go straight to the replacement (pickIdx -1 = the one).
+			pe.pickIdx = -1
+			pe.step = editAwaitRepl
+			return tb.msg.EditAskReplace(text, 1), tb.cancelKB(editOriginData(pe.noteID, pe.kind, pe.state)), false, nil
+		}
+		// Ambiguous: let the user point at ONE occurrence (or all) before typing
+		// the replacement, instead of silently rewriting every hit.
+		pe.step = editAwaitPick
+		body, kb, err := tb.renderEditPick(ctx, pe)
+		return body, kb, false, err
+
+	case editAwaitPick:
+		// The user is expected to TAP an occurrence here; a typed message is a
+		// mis-tap — re-show the picker rather than swallow the text as an edit.
+		body, kb, err := tb.renderEditPick(ctx, pe)
+		return body, kb, false, err
 
 	case editAwaitRepl:
 		n, err := tb.db.GetNote(ctx, pe.noteID)
 		if err != nil {
 			return "", nil, false, err
 		}
-		if !strings.Contains(n.RawText, pe.find) {
+		newText, ok := tb.applyReplace(n.RawText, pe, text)
+		if !ok {
+			// The find term vanished between steps (rare; e.g. an MCP-side edit)
+			// — nothing to replace, back to the menu.
 			body, kb, err := tb.renderEditMenu(ctx, pe.noteID, pe.kind, pe.state, tb.msg.EditNotFound(pe.find))
 			return body, kb, true, err
 		}
-		newText := strings.ReplaceAll(n.RawText, pe.find, text)
 		if err := tb.archiveText(ctx, pe.noteID, newText); err != nil {
 			return "", nil, false, err
 		}
@@ -339,6 +362,186 @@ func (tb *Bot) advanceEdit(ctx context.Context, pe *pendingEdit, text string) (s
 	// Unknown step — restore and finish.
 	body, kb, err := tb.renderEditedNote(ctx, pe.noteID, pe.kind, pe.state, false)
 	return body, kb, true, err
+}
+
+// --- Replace-occurrence picker -------------------------------------------
+
+// editPickData encodes a picker button payload: the chosen occurrence index
+// (-1 = all) followed by the edit origin (bare id or id:kind:state). find and
+// the replacement live in the in-memory editState, so only the index needs to
+// travel through the 64-byte callback budget.
+func editPickData(idx int, id int64, kind, state string) string {
+	return strconv.Itoa(idx) + ":" + editOriginData(id, kind, state)
+}
+
+// editPickFromData is the inverse of editPickData.
+func editPickFromData(data string) (idx int, id int64, kind, state string, ok bool) {
+	parts := strings.SplitN(strings.TrimSpace(data), ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, "", "", false
+	}
+	i, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, "", "", false
+	}
+	id, kind, state, ok = editOriginFromData(parts[1])
+	return i, id, kind, state, ok
+}
+
+// applyReplace computes the new note text for the replace flow: every occurrence
+// when pe.pickIdx < 0, otherwise just the chosen 0-based occurrence. ok is false
+// when the find term is no longer present (or the chosen occurrence is gone).
+func (tb *Bot) applyReplace(raw string, pe *pendingEdit, repl string) (string, bool) {
+	if pe.pickIdx < 0 {
+		if !strings.Contains(raw, pe.find) {
+			return "", false
+		}
+		return strings.ReplaceAll(raw, pe.find, repl), true
+	}
+	return replaceNth(raw, pe.find, repl, pe.pickIdx)
+}
+
+// replaceNth replaces the nth (0-based) non-overlapping occurrence of old in s
+// with neu, matching strings.ReplaceAll's left-to-right, non-overlapping order.
+// ok is false when s has fewer than n+1 occurrences.
+func replaceNth(s, old, neu string, n int) (string, bool) {
+	if old == "" || n < 0 {
+		return s, false
+	}
+	off := 0
+	for i := 0; ; i++ {
+		j := strings.Index(s[off:], old)
+		if j < 0 {
+			return s, false
+		}
+		pos := off + j
+		if i == n {
+			return s[:pos] + neu + s[pos+len(old):], true
+		}
+		off = pos + len(old)
+	}
+}
+
+// occurrencePositions returns the byte offsets of up to `limit` non-overlapping
+// occurrences of old in s (same order as replaceNth / strings.ReplaceAll).
+func occurrencePositions(s, old string, limit int) []int {
+	if old == "" || limit <= 0 {
+		return nil
+	}
+	var pos []int
+	off := 0
+	for len(pos) < limit {
+		j := strings.Index(s[off:], old)
+		if j < 0 {
+			break
+		}
+		pos = append(pos, off+j)
+		off += j + len(old)
+	}
+	return pos
+}
+
+// snippetAround returns a short, rune-safe context window around the match at
+// byte offset pos, with the match itself wrapped in ‹ › so overlapping contexts
+// stay tellable apart. Ellipses mark truncation on either side.
+func snippetAround(s string, pos, matchLen, window int) string {
+	lo := pos - window
+	if lo < 0 {
+		lo = 0
+	}
+	hi := pos + matchLen + window
+	if hi > len(s) {
+		hi = len(s)
+	}
+	seg := s[lo:pos] + "‹" + s[pos:pos+matchLen] + "›" + s[pos+matchLen:hi]
+	seg = strings.ToValidUTF8(seg, "") // drop any partial runes the byte window clipped
+	pre, suf := "", ""
+	if lo > 0 {
+		pre = "…"
+	}
+	if hi < len(s) {
+		suf = "…"
+	}
+	return pre + seg + suf
+}
+
+// editPickMax caps how many individual occurrences the picker lists; beyond it
+// the user can still Replace all (or refine the find term).
+const editPickMax = 6
+
+// editPickWindow is the bytes of context shown on each side of a match in the
+// picker (~12 Cyrillic chars).
+const editPickWindow = 24
+
+// renderEditPick builds the occurrence picker: a numbered, context-quoted list
+// of matches with one [n] button each, plus [Replace all] and [✗ Cancel].
+func (tb *Bot) renderEditPick(ctx context.Context, pe *pendingEdit) (string, *tele.ReplyMarkup, error) {
+	n, err := tb.db.GetNote(ctx, pe.noteID)
+	if err != nil {
+		return "", nil, err
+	}
+	pos := occurrencePositions(n.RawText, pe.find, editPickMax+1)
+	more := len(pos) > editPickMax
+	if more {
+		pos = pos[:editPickMax]
+	}
+	var body strings.Builder
+	body.WriteString(tb.msg.EditPickHeader(pe.find, len(pos), more))
+	var rows [][]tele.InlineButton
+	var numRow []tele.InlineButton
+	for i, p := range pos {
+		body.WriteString(fmt.Sprintf("\n%d. %s", i+1, snippetAround(n.RawText, p, len(pe.find), editPickWindow)))
+		btn := editPickBtn
+		btn.Text = strconv.Itoa(i + 1)
+		btn.Data = editPickData(i, pe.noteID, pe.kind, pe.state)
+		numRow = append(numRow, btn)
+		if len(numRow) == 3 {
+			rows = append(rows, numRow)
+			numRow = nil
+		}
+	}
+	if len(numRow) > 0 {
+		rows = append(rows, numRow)
+	}
+	all := editPickBtn
+	all.Text = tb.msg.EditPickAllBtn
+	all.Data = editPickData(-1, pe.noteID, pe.kind, pe.state)
+	cancel := editCancelBtn
+	cancel.Text = tb.msg.DeleteNoBtn
+	cancel.Data = editOriginData(pe.noteID, pe.kind, pe.state)
+	rows = append(rows, []tele.InlineButton{all}, []tele.InlineButton{cancel})
+	return body.String(), &tele.ReplyMarkup{InlineKeyboard: rows}, nil
+}
+
+// cbEditPick handles a picker tap: it records the chosen occurrence (-1 = all)
+// on the in-memory editState and asks for the replacement text in place.
+func (tb *Bot) cbEditPick(c tele.Context) error {
+	cb := c.Callback()
+	if cb == nil {
+		return nil
+	}
+	idx, id, kind, state, ok := editPickFromData(cb.Data)
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
+	}
+	pe := tb.currentEditState()
+	if pe == nil || pe.noteID != id || pe.find == "" {
+		// editState was lost (e.g. a restart) — the picker buttons are stale.
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.EditExpired})
+	}
+	pe.pickIdx = idx
+	pe.step = editAwaitRepl
+	tb.setEditState(pe)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	count := 1 // a specific occurrence → singular prompt
+	if idx < 0 {
+		if note, gerr := tb.db.GetNote(ctx, id); gerr == nil {
+			count = strings.Count(note.RawText, pe.find)
+		}
+	}
+	tb.tryEdit(c, tb.msg.EditAskReplace(pe.find, count), tb.cancelKB(editOriginData(id, kind, state)))
+	return c.Respond()
 }
 
 // archiveText archives the note's current text to notes_history and replaces

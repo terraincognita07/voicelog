@@ -70,6 +70,10 @@ func (tb *Bot) cbDeleteAsk(c tele.Context) error {
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
+	// Asking to delete is a pivot away from any half-finished edit — abandon
+	// it so its in-memory editState can't later swallow a typed message. Same
+	// rule as tag-add / vocab-add / a fresh ✏️.
+	tb.clearEditState()
 	idStr := strconv.FormatInt(id, 10)
 	yes := deleteYesBtn
 	yes.Text = tb.msg.DeleteYesBtn

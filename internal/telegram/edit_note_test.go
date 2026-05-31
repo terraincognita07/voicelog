@@ -223,6 +223,195 @@ func TestSavedMarkup_OffersDeleteAndEdit(t *testing.T) {
 	}
 }
 
+func TestReplaceNth(t *testing.T) {
+	cases := []struct {
+		s, old, neu string
+		n           int
+		want        string
+		ok          bool
+	}{
+		{"кот и ещё кот", "кот", "пёс", 0, "пёс и ещё кот", true},
+		{"кот и ещё кот", "кот", "пёс", 1, "кот и ещё пёс", true},
+		{"кот и ещё кот", "кот", "пёс", 2, "кот и ещё кот", false}, // only two occurrences
+		{"abcabcabc", "abc", "X", 1, "abcXabc", true},
+		{"nothing here", "zzz", "X", 0, "nothing here", false},
+		{"x", "", "y", 0, "x", false}, // empty find never matches
+	}
+	for _, c := range cases {
+		got, ok := replaceNth(c.s, c.old, c.neu, c.n)
+		if got != c.want || ok != c.ok {
+			t.Errorf("replaceNth(%q,%q,%q,%d) = (%q,%v), want (%q,%v)",
+				c.s, c.old, c.neu, c.n, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestEditPickDataRoundTrip(t *testing.T) {
+	cases := []struct {
+		idx   int
+		id    int64
+		kind  string
+		state string
+	}{
+		{-1, 7, "", ""},          // saved-reply origin, "all"
+		{0, 7, "", ""},           // saved-reply origin, first occurrence
+		{2, 12, "p", "f~2"},      // card origin with list state
+		{5, 9999999999, "r", ""}, // card origin, large id
+	}
+	for _, c := range cases {
+		data := editPickData(c.idx, c.id, c.kind, c.state)
+		if len(data) > 64 {
+			t.Errorf("editPickData %q exceeds the 64-byte callback budget (%d)", data, len(data))
+		}
+		idx, id, kind, state, ok := editPickFromData(data)
+		if !ok || idx != c.idx || id != c.id || kind != c.kind || state != c.state {
+			t.Errorf("round-trip %q = (%d,%d,%q,%q,%v), want (%d,%d,%q,%q,true)",
+				data, idx, id, kind, state, ok, c.idx, c.id, c.kind, c.state)
+		}
+	}
+}
+
+func TestAdvanceEdit_ReplacePicker_ShowsOccurrences(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "кот и ещё кот", 0)
+	pe := &pendingEdit{noteID: id, step: editAwaitFind}
+
+	// An ambiguous find (>1 match) opens the picker instead of replacing all.
+	body, kb, done, err := tb.advanceEdit(ctx, pe, "кот")
+	if err != nil {
+		t.Fatalf("advanceEdit (find): %v", err)
+	}
+	if done {
+		t.Error("an ambiguous find should open the picker, not finish")
+	}
+	if pe.step != editAwaitPick {
+		t.Fatalf("expected step editAwaitPick, got %d", pe.step)
+	}
+	if !strings.Contains(body, "кот") {
+		t.Errorf("picker body should quote the matches, got %q", body)
+	}
+	if !markupHasButton(kb, "1") || !markupHasButton(kb, "2") {
+		t.Error("picker should offer a numbered button per occurrence")
+	}
+	if !markupHasButton(kb, tb.msg.EditPickAllBtn) {
+		t.Error("picker should offer Replace all")
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "кот и ещё кот" {
+		t.Errorf("note must not change while picking: %q", n.RawText)
+	}
+}
+
+func TestAdvanceEdit_ReplacePickAll(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "кот и ещё кот", 0)
+	// Past the picker: "Replace all" chosen (pickIdx -1), awaiting the text.
+	pe := &pendingEdit{noteID: id, step: editAwaitRepl, find: "кот", pickIdx: -1}
+
+	_, _, done, err := tb.advanceEdit(ctx, pe, "пёс")
+	if err != nil {
+		t.Fatalf("advanceEdit (repl): %v", err)
+	}
+	if !done {
+		t.Error("the replacement should finish the flow")
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "пёс и ещё пёс" {
+		t.Fatalf("Replace all did not rewrite every occurrence: %q", n.RawText)
+	}
+}
+
+func TestAdvanceEdit_ReplacePickOne(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "кот и ещё кот", 0)
+	// Second occurrence picked (0-based index 1) — only it must change.
+	pe := &pendingEdit{noteID: id, step: editAwaitRepl, find: "кот", pickIdx: 1}
+
+	_, _, done, err := tb.advanceEdit(ctx, pe, "пёс")
+	if err != nil {
+		t.Fatalf("advanceEdit (repl): %v", err)
+	}
+	if !done {
+		t.Error("the replacement should finish the flow")
+	}
+	if n, _ := tb.db.GetNote(ctx, id); n.RawText != "кот и ещё пёс" {
+		t.Fatalf("only the chosen occurrence should change: %q", n.RawText)
+	}
+	assertArchived(t, tb, id, "кот и ещё кот")
+}
+
+func TestCbEditPick_ArmsReplaceForChosenOccurrence(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "кот и ещё кот", 0)
+	tb.setEditState(&pendingEdit{noteID: id, step: editAwaitPick, find: "кот", pickIdx: -1})
+
+	fc := &fakeCtx{callback: &tele.Callback{Data: editPickData(1, id, "", "")}}
+	if err := tb.cbEditPick(fc); err != nil {
+		t.Fatalf("cbEditPick: %v", err)
+	}
+	pe := tb.currentEditState()
+	if pe == nil || pe.step != editAwaitRepl || pe.pickIdx != 1 {
+		t.Fatalf("cbEditPick should arm await-repl for occurrence 1, got %+v", pe)
+	}
+	if _, ok := fc.lastEdit(); !ok {
+		t.Error("cbEditPick should edit the menu into the replacement prompt")
+	}
+}
+
+func TestCbCardTagAdd_ClearsHalfFinishedEdit(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "позвонить Коле", 0)
+	// A replace edit left half-finished (awaiting the replacement word) is
+	// exactly what used to leak into the next message as a phantom edit.
+	tb.setEditState(&pendingEdit{noteID: id, step: editAwaitRepl, find: "Коле"})
+
+	ref := cardRef{id: id, kind: "p"}
+	fc := &fakeCtx{callback: &tele.Callback{Data: ref.encode()}}
+	if err := tb.cbCardTagAdd(fc); err != nil {
+		t.Fatalf("cbCardTagAdd: %v", err)
+	}
+	if tb.currentEditState() != nil {
+		t.Error("opening the tag-add prompt must abandon the half-finished edit")
+	}
+	if _, sent := fc.lastSent(); !sent {
+		t.Error("cbCardTagAdd should send the tag force-reply prompt")
+	}
+}
+
+func TestCbDeleteAsk_ClearsHalfFinishedEdit(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "позвонить Коле", 0)
+	tb.setEditState(&pendingEdit{noteID: id, step: editAwaitRepl, find: "Коле"})
+
+	fc := &fakeCtx{callback: &tele.Callback{Data: strconv.FormatInt(id, 10)}}
+	if err := tb.cbDeleteAsk(fc); err != nil {
+		t.Fatalf("cbDeleteAsk: %v", err)
+	}
+	if tb.currentEditState() != nil {
+		t.Error("asking to delete must abandon the half-finished edit")
+	}
+}
+
+func TestCbCardDeleteAsk_ClearsHalfFinishedEdit(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "позвонить Коле", 0)
+	tb.setEditState(&pendingEdit{noteID: id, step: editAwaitFind})
+
+	ref := cardRef{id: id, kind: "p"}
+	fc := &fakeCtx{callback: &tele.Callback{Data: ref.encode()}}
+	if err := tb.cbCardDeleteAsk(fc); err != nil {
+		t.Fatalf("cbCardDeleteAsk: %v", err)
+	}
+	if tb.currentEditState() != nil {
+		t.Error("asking to delete (card) must abandon the half-finished edit")
+	}
+}
+
 // --- helpers --------------------------------------------------------------
 
 func markupOf(t *testing.T, opts []interface{}) *tele.ReplyMarkup {

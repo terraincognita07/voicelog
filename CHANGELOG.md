@@ -9,6 +9,29 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Added
+
+- **Replace-a-word can target one occurrence of many.** When the word or phrase
+  you're replacing appears more than once in a note, `🔤 Replace a word` now
+  opens a numbered picker — each match shown with surrounding context (the match
+  wrapped in `‹ ›`) and its own `[n]` button, plus `[Replace all]` and
+  `[✗ Cancel]`. Tap one to change just that occurrence; previously every match
+  was rewritten with no way to pick. A single match goes straight to the
+  replacement as before. The list is capped at 6 matches (beyond that, only
+  `Replace all`).
+
+### Fixed
+
+- **A half-finished edit no longer leaks into the next action.** The button edit
+  flow keeps its progress in one in-memory slot that only `✗ Cancel`, a fresh
+  `✏️`, or finishing the edit used to clear. Tapping `🏷 Tags → ➕ Add`,
+  `/vocab → ➕ Add`, `🗑 Delete`, or sending a new voice/audio note while a
+  `🔤`/`📝` edit was half-armed left that slot live — so the next message you
+  typed was silently applied as an edit, and could even spill into a brand-new
+  note. Every one of those pivots now abandons the pending edit. Viewing a note
+  (opening its card, paging a list) intentionally keeps the edit, so you can
+  reference another note before answering.
+
 ## [0.6.0] — 2026-05-31
 
 ### Changed

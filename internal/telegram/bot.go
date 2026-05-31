@@ -174,6 +174,7 @@ func (tb *Bot) registerHandlers() {
 	tb.bot.Handle(&editReplaceBtn, tb.cbEditReplace)
 	tb.bot.Handle(&editFullBtn, tb.cbEditFull)
 	tb.bot.Handle(&editCancelBtn, tb.cbEditCancel)
+	tb.bot.Handle(&editPickBtn, tb.cbEditPick)
 	tb.bot.Handle(&openCardBtn, tb.cbOpenCard)
 	tb.bot.Handle(&cardTagsBtn, tb.cbCardTags)
 	tb.bot.Handle(&cardTagsBackBtn, tb.cbCardTagsBack)
@@ -275,6 +276,11 @@ func (tb *Bot) onAudio(c tele.Context) error {
 func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+
+	// A new capture is a pivot away from any half-finished button edit:
+	// drop the in-memory editState so the saved-reply of this fresh note
+	// can't be mistaken for an edit answer on the next typed message.
+	tb.clearEditState()
 
 	// Disk-full guard: bail out BEFORE downloading 200 KB and burning a
 	// whisper pass on something that won't fit. Skipped when minFreeDiskBytes

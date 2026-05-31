@@ -38,9 +38,11 @@ the `locales` map in `internal/telegram/locale.go`.
   audio file. There is no undo — that's the point of the confirm step.
 - **Inline ✏️ Edit button** next to 🗑 — tap it and the message turns into an
   edit menu **in place** (no separate prompt to dangle): `[🔤 Replace a word]`
-  walks you through *which word → with what* as two plain questions (no syntax
-  to remember — fixes one whisper-misheard word without retyping the note),
-  `[📝 Rewrite all]` takes the whole new text, `[✗ Cancel]` restores the note.
+  walks you through *which word → with what* as plain questions (no syntax to
+  remember — fixes one whisper-misheard word without retyping the note). If that
+  word appears more than once, a numbered picker (each match shown with context)
+  lets you replace just one occurrence or `Replace all`. `[📝 Rewrite all]`
+  takes the whole new text, `[✗ Cancel]` restores the note.
   The note message is updated in place and the previous text is archived to
   `notes_history` (reversible at the SQL level). Back out at any point and
   nothing is changed or left hanging.
