@@ -9,6 +9,16 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-31
+
+### Fixed
+
+- **`serverVersion` now matches the release tag.** The `v0.5.0` tag landed on
+  a commit that still reported `serverVersion` `0.4.0` in the MCP `initialize`
+  handshake — the sync bump came one commit later (pushed to `main` but never
+  tagged). `0.5.1` corrects the advertised version to `0.5.1`. Cosmetic: the
+  version string only, no behavior change.
+
 ## [0.5.0] — 2026-05-31
 
 ### Changed (breaking)
