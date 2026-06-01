@@ -9,7 +9,7 @@ sharpen the existing single-user surface are very welcome.
 
 - Open or comment on an issue first if your change is non-trivial. Avoid
   surprise-PRs over 200 lines.
-- Read `README.md` § "Security model" — the threat-model boundary is
+- Read `docs/SECURITY-MODEL.md` — the threat-model boundary is
   intentional. Changes that quietly raise scope (e.g. opening MCP without
   bearer, exposing audio paths in tool responses) won't be merged without
   a discussion.
@@ -88,7 +88,7 @@ go run ./cmd/bot                 # bot on host, faster iteration than docker
 
 - Fill out the PR template (`.github/PULL_REQUEST_TEMPLATE.md`).
 - CI must pass: `go vet`, `staticcheck`, `go test -race`, `govulncheck`,
-  docker builds.
+  `semgrep`, `gitleaks`, docker builds.
 - Bot UI changes: include a short "what the user sees" description or
   screenshot.
 

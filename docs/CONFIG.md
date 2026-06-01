@@ -9,7 +9,7 @@ missing; optional ones fall back to defaults documented below.
 | `BOT_TOKEN` | yes | — | Telegram bot token from BotFather |
 | `ALLOWED_USER_ID` | yes | — | The only Telegram user ID allowed to talk to the bot |
 | `DB_PATH` | yes | — | SQLite file path inside the container, e.g. `/data/voicelog.db` |
-| `WHISPER_URL` | yes | — | Whisper `/inference` endpoint, e.g. `http://whisper:8080/inference` |
+| `WHISPER_URL` | yes | — | Whisper `/inference` endpoint, e.g. `http://whisper:8080/inference`. Required by the bot; the mcp container runs without it (then `retranscribe` is disabled). |
 | `MCP_TOKEN` | yes | — | Bearer token for the MCP server. Min 16 chars. Use `openssl rand -hex 32`. |
 | `MCP_PORT` | no | `8081` | Port the mcp container listens on inside the host |
 | `TZ` | no | UTC | Timezone for log timestamps and bot replies |

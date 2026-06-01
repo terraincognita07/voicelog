@@ -141,7 +141,7 @@ Every tool sets `ReadOnlyHint`, `DestructiveHint`, `IdempotentHint`,
 
 ## Security model
 
-See `README.md` § "Security model" and `SECURITY.md`. Bearer token is the
+See `docs/SECURITY-MODEL.md` and `SECURITY.md`. Bearer token is the
 only credential for MCP; `ALLOWED_USER_ID` is the only credential for the
 bot. The threat-model boundary is **single-user self-host** — extending into
 multi-tenant requires audit-log + rate-limit + token-per-tenant work that is

@@ -24,7 +24,7 @@ Please include:
 
 ## Security model
 
-voicelog is designed as a single-user, self-hosted tool. Please read the Security model section in the README before deploying.
+voicelog is designed as a single-user, self-hosted tool. Please read [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) before deploying.
 
 Key points:
 

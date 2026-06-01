@@ -27,6 +27,12 @@ intentionally NOT protected. For vulnerability disclosure see
   (`/data/voicelog.db`), and third-party HTTP body content. Users see e.g.
   `⚠ Speech recognition unavailable. Try again in a moment.`; the full err
   stays in `slog`.
+- **Sanitized MCP errors.** MCP tool handlers route internal/store failures
+  through a generic `"<tool> failed — see server logs"` rather than the raw
+  error (which could carry SQL text or the DB path); the operator gets the
+  detail in `slog`. Validation, not-found, and `search_notes` FTS5-query
+  errors return verbatim — they describe the caller's own input and are
+  path-free.
 - **Throttled rejection logs.** Anonymous users get a single Warn line per
   user-id per 15 minutes (not per-message) — protects the log from
   someone spamming the bot to fill disk.
