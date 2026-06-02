@@ -6,7 +6,7 @@ require (
 	github.com/kljensen/snowball v0.10.0
 	github.com/mark3labs/mcp-go v0.54.1
 	gopkg.in/telebot.v3 v3.3.8
-	modernc.org/sqlite v1.50.1
+	modernc.org/sqlite v1.51.0
 )
 
 require (
