@@ -9,6 +9,8 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-06-08
+
 ### Fixed
 
 - **MCP `serverVersion` is now stamped from `git describe` at build

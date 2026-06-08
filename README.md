@@ -201,6 +201,18 @@ docker compose up -d
 docker compose logs -f bot mcp
 ```
 
+> **Version stamping (optional).** The mcp container reports a version to
+> Claude in the MCP handshake. Built as above it reports `dev`. To stamp
+> the real release tag instead, prefix the build with `VERSION` derived
+> from git (run on a checkout that has the tag):
+>
+> ```bash
+> VERSION=$(git describe --tags --dirty | sed 's/^v//') docker compose up -d --build
+> ```
+>
+> Plain `docker compose up -d` keeps working — `dev` is just the honest
+> answer for an unstamped build.
+
 Send a voice message to your bot in Telegram. Within a few seconds:
 
 ```
