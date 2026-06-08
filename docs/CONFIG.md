@@ -16,7 +16,7 @@ missing; optional ones fall back to defaults documented below.
 | `BOT_LOCALE` | no | `en` | Bot reply language: `en` or `ru`. Commands are unchanged in any locale. |
 | `WHISPER_PROMPT` | no | — | Optional whisper "initial prompt" (admin default). User-managed vocabulary (`/vocab`) is appended after this. |
 | `AUDIO_RETENTION_DAYS` | no | `0` | If `> 0`, keep the original `.oga` voice file at `AUDIO_DIR/<note_id>.oga` for that many days. A background janitor sweeps every 6h. `0` (default) disables retention — audio is deleted right after transcription. |
-| `AUDIO_DIR` | no | `/data/audio` | Where retained `.oga` files live. Only consulted when `AUDIO_RETENTION_DAYS > 0`. |
+| `AUDIO_DIR` | no | `/data/audio` | Where retained `.oga` files live. The bot consults it only when `AUDIO_RETENTION_DAYS > 0`; the mcp container also reads it so `delete_notes` can remove a note's retained audio — set it to match the bot even on a whisper-less mcp, or deleted notes leave their `.oga` behind. |
 | `HALLUCINATION_THRESHOLD` | no | `0.6` | Whisper hallucination detector cutoff (float ∈ [0, 1]). First segment's `no_speech_prob` above this flags the note as suspect. Raise to be stricter, lower to be looser. |
 | `MIN_FREE_DISK_MB` | no | `500` | Bot refuses new captures when free space on the data filesystem drops below this. `0` disables the guard. |
 | `DB_MAINTENANCE_DISABLED` | no | — | When set to any non-empty value, the mcp container skips its weekly WAL checkpoint + monthly VACUUM loop. Use only if you run maintenance externally. |

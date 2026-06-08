@@ -18,7 +18,7 @@ queue, no background workers beyond a few goroutines, no caches, no ORM.
                                                 (SQLite + FTS5, WAL)
 ```
 
-- **whisper** — `ggerganov/whisper.cpp` server image. CPU-only inference.
+- **whisper** — `ghcr.io/ggml-org/whisper.cpp` server image. CPU-only inference.
   No auth, internal compose network only.
 - **bot** — long-polls Telegram, downloads voice messages, runs ffmpeg →
   whisper, persists transcriptions, owns audio retention copy step.

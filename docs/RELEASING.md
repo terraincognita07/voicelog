@@ -80,13 +80,22 @@ gate.
    MINOR / PATCH per the rules above. When in doubt, prefer the
    higher bump — easier to explain "we skipped v0.4 because v0.5
    added that one breaking thing" than to retroactively re-tag.
-8. **Bump `serverVersion`** in `internal/mcp/server.go` to the version
-   you're about to tag. It's the version the MCP server reports to
-   clients in the initialize handshake; it's a hardcoded constant, so
-   it silently lags unless bumped here, in the same commit as the tag.
-   (If this ever becomes a chore, inject it via `-ldflags "-X
-   github.com/terraincognita07/voicelog/internal/mcp.serverVersion=…"`
-   from `git describe` and make it a `var`.)
+8. **`serverVersion` no longer needs a manual bump.** It's injected at
+   build time from `git describe` via `-ldflags` (wired in the Makefile
+   and `docker/Dockerfile.mcp`; `serverVersion` is now a `var` defaulting
+   to `"dev"`). The only requirement is **build the release images after
+   the tag exists** — `git describe` on a tagged commit yields the bare
+   tag, so the handshake matches automatically. Build with the version in
+   the shell env:
+
+   ```bash
+   VERSION=$(git describe --tags --dirty | sed 's/^v//') \
+     docker compose up -d --build
+   ```
+
+   A plain `go build` / un-stamped image reports `"dev"`, which is the
+   honest answer for an untagged build. This closes the recurring drift
+   that hit v0.5.0 and v0.8.1 (the hand-bump kept getting forgotten).
 
 ## Cutting the tag
 
@@ -118,58 +127,22 @@ Then on GitHub:
 4. Body: paste the new `[vX.Y.Z]` section of CHANGELOG verbatim.
 5. **Publish.**
 
-## The CHANGELOG-vs-git history weirdness
+## Historical: the CHANGELOG-vs-git reconciliation (resolved at v0.2.0)
 
 In the v0.1.0 → v0.2.0 window the CHANGELOG was edited proactively
 with draft `[0.2.0]` and `[0.3.0]` sections, but no matching git
-tags were ever pushed. The current state of the repo is:
+tags were ever pushed, so the CHANGELOG and `git tag -l` disagreed.
 
-- `v0.1.0` — real git tag, real release on GitHub
-- `[0.2.0]` / `[0.3.0]` — CHANGELOG sections describing work that
-  landed on `main` but was never tagged
-- `[Unreleased]` — work since `[0.3.0]`
+This was resolved via **Option A**: at v0.2.0 the orphaned
+`[0.2.0]` + `[0.3.0]` + `[Unreleased]` sections were merged into a
+single `[0.2.0]` release note (the CHANGELOG entry itself records
+this — "option A from docs/RELEASING.md"). Since then the invariant
+holds: one git tag per CHANGELOG section. Tags now run `v0.1.0` …
+`v0.8.1` with one section each (the skipped `v0.4` is intentional —
+see the version-bump note above).
 
-Before cutting the *next* tag, decide how to reconcile this — pick
-one and stick with it:
-
-### Option A — sink everything into one big [vNext]
-
-Merge `[0.2.0]` + `[0.3.0]` + `[Unreleased]` into one new section
-named after the actual next version (`v0.2.0` if you treat
-post-`v0.1.0` as the next MINOR). The history loses the original
-batch boundaries, but matches git exactly: one tag per CHANGELOG
-section.
-
-**Pick this if:** you want CHANGELOG and `git tag -l` to agree
-trivially, and don't mind that the "P0 / P1 / P2 batch" framing
-becomes a single big release note.
-
-### Option B — backfill retroactive tags
-
-Put a `v0.2.0` tag on the commit where the P0 batch landed
-(2026-05-27, commit predates the F1/F2/F3 work) and `v0.3.0` on
-the commit where the P1+P2 batches finished. Then tag the
-current `main` as `v0.4.0`. Three new tags appear in `git tag -l`.
-
-**Pick this if:** you value the granular release notes already
-written. The tags will all share roughly the same publish date
-on GitHub since they're being added in arrears, which can look
-slightly weird.
-
-### Option C — intermediate
-
-Tag current `main` as `v0.2.0` and leave the existing `[0.3.0]`
-section as a CHANGELOG-only historical record. Rename `[0.3.0]`
-→ "Drafted but never released" or similar so future readers
-aren't confused. `[Unreleased]` contents merge into the new
-`[0.2.0]`.
-
-**Pick this if:** you want CHANGELOG to mostly tell a linear
-story but don't want to retro-tag, and are OK explaining the
-one orphaned section.
-
-The decision is binary at tag time — pick once, document the
-choice in the commit message of the release commit, and move on.
+Nothing to decide here anymore — kept as a record of why the early
+CHANGELOG history looks the way it does.
 
 ## Hotfix / patch release
 
@@ -191,8 +164,9 @@ Same publish flow on GitHub.
   "Next" list. If a roadmap item moved versions (planned for v0.3.0
   but landed in v0.2.0), edit the description rather than leaving
   the wrong version next to it.
-- Sweep [.agents/context/todo.md](../.agents/context/todo.md) for
-  items that the release closed implicitly. Check them off with a
-  one-line note ("done 2026-MM-DD, shipped in vX.Y.Z").
+- Sweep your local tracking notes (maintainers: the internal
+  `.agents/` brain) for items the release closed implicitly. Check
+  them off with a one-line note ("done 2026-MM-DD, shipped in
+  vX.Y.Z").
 - Announce on whatever channel you use. The GitHub release page is
   the canonical text; everything else links to it.

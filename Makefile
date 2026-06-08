@@ -4,6 +4,16 @@
 GO          ?= go
 COVER_FILE  ?= coverage.out
 
+# Version stamped into the MCP `initialize` handshake. Derived from the
+# git tag so it can't drift from the release (the old hand-bump missed at
+# v0.5.0 and v0.8.1). `git describe` → e.g. `0.8.1` on a tagged commit,
+# `0.8.1-3-gabc123` ahead of one; falls back to `dev` with no tags/git.
+# Override explicitly with `make build VERSION=1.2.3` if needed.
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+VERSION     ?= $(or $(GIT_VERSION),dev)
+MCP_PKG     := github.com/terraincognita07/voicelog/internal/mcp
+LDFLAGS     := -X $(MCP_PKG).serverVersion=$(VERSION)
+
 .PHONY: help test test-race build vet lint vuln fmt tidy ci clean
 
 help: ## Show this help.
@@ -16,7 +26,7 @@ test-race: ## Run the test suite with the race detector. Requires CGO.
 	CGO_ENABLED=1 $(GO) test -race -count=1 -coverprofile=$(COVER_FILE) -covermode=atomic ./...
 
 build: ## Build both binaries (CGO disabled — same as production images).
-	CGO_ENABLED=0 $(GO) build ./...
+	CGO_ENABLED=0 $(GO) build -ldflags '$(LDFLAGS)' ./...
 
 vet: ## go vet across the whole module.
 	$(GO) vet ./...

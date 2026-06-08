@@ -4,9 +4,9 @@ Public roadmap for self-hosted voicelog. Items here are **planned**, not
 **promised** — order changes when reality does. If you want to work on
 one, open a discussion or draft PR first so we don't overlap.
 
-For shipped work see [CHANGELOG.md](../CHANGELOG.md). For the internal
-short-list (security findings, tech debt) see local-only
-`.agents/context/todo.md`.
+For shipped work see [CHANGELOG.md](../CHANGELOG.md). Maintainers keep a
+more granular internal short-list (security findings, tech debt) in a
+local-only file that does not ship with the repo.
 
 ## Next
 

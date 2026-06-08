@@ -69,8 +69,9 @@ func StartPprof(addr string, logger *slog.Logger) (stop func(context.Context), e
 	}, nil
 }
 
-// isLoopback returns true iff addr's host portion is a loopback. Only
-// literal "localhost", "127.0.0.1", and "[::1]" pass; everything else
+// isLoopback returns true iff addr's host portion is a loopback. The
+// literal "localhost" passes, as does any IP that net.IP.IsLoopback
+// accepts — i.e. the whole 127.0.0.0/8 block plus ::1. Everything else
 // (bare ":N", "0.0.0.0:N", real hostnames, public IPs) is refused. We
 // don't run a DNS lookup — operators that need a custom loopback
 // hostname can patch the binary; the common case stays safe.

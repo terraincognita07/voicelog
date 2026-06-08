@@ -14,7 +14,7 @@ the `locales` map in `internal/telegram/locale.go`.
 
 ## Commands
 
-- `/pending` — last 20 pending notes (id, time, first 80 chars)
+- `/pending` — last 20 pending notes (id, time, first 60 chars)
 - `/recent` — last 10 notes regardless of status
 - `/delete <id>` — permanently delete a note by id (no confirm step — typing the id is itself the confirm)
 - `/vocab` — manage whisper vocabulary (names, jargon, rare terms):

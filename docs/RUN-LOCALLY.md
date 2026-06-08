@@ -28,10 +28,12 @@ internal/
   audio/                 # opt-in retention (SaveOriginal + Janitor + Resolve)
   config/                # MustEnv + ParseFloat01 for cmd/*
   diskguard/             # build-tagged free-space probe (unix/other)
+  diag/                  # gated loopback-only pprof endpoint
   promptbuilder/         # composes whisper "initial prompt" from base + vocab
 scripts/
   fetch-model.sh         # download a whisper ggml model
   whisper-smoke.sh       # local smoke test against whisper-server
+  smoke-mcp.sh           # MCP release-gate smoke test (see RELEASING.md)
 docker/
   Dockerfile.bot         # alpine + ffmpeg, USER 10000
   Dockerfile.mcp         # distroless/static, USER nonroot

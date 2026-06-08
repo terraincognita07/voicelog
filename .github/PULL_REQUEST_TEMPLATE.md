@@ -17,7 +17,7 @@ apply. Read CONTRIBUTING.md before opening if you haven't.
 - [ ] `internal/db` (SQL, migrations)
 - [ ] `internal/whisper`
 - [ ] `internal/audio` / `internal/diskguard`
-- [ ] `migrations/` (schema change)
+- [ ] `internal/db/migrations/` (schema change)
 - [ ] CI / Dockerfiles / docker-compose
 - [ ] docs only
 

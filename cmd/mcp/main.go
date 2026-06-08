@@ -61,22 +61,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	// audio_path is stored relative to AUDIO_DIR for new notes. Set
+	// unconditionally: delete_notes must remove retained audio whether or
+	// not whisper is wired, otherwise whisper-less mcp silently leaks files
+	// (and breaks the documented delete contract). Same default as cmd/bot
+	// so the two containers agree out of the box; operators who change
+	// AUDIO_DIR must set it in both.
+	var deps mcp.RetranscribeDeps
+	deps.AudioDir = os.Getenv("AUDIO_DIR")
+	if deps.AudioDir == "" {
+		deps.AudioDir = "/data/audio"
+	}
+
 	// Optional: wire whisper so the retranscribe MCP tool can re-run
 	// transcription on retained audio. If WHISPER_URL is unset, the tool
 	// is still registered but returns a clear "unavailable" error.
-	var deps mcp.RetranscribeDeps
 	if whisperURL := os.Getenv("WHISPER_URL"); whisperURL != "" {
 		deps.Whisper = whisper.New(whisperURL)
 		deps.Whisper.Logger = logger // enables one-time "no segments" warning
 		deps.BasePrompt = os.Getenv("WHISPER_PROMPT")
 		deps.HallucinationThresh = config.ParseFloat01(logger, "HALLUCINATION_THRESHOLD", 0.6)
-		// audio_path is stored relative to AUDIO_DIR for new notes.
-		// Same default as cmd/bot so the two containers agree out of
-		// the box; operators who change AUDIO_DIR must set it in both.
-		deps.AudioDir = os.Getenv("AUDIO_DIR")
-		if deps.AudioDir == "" {
-			deps.AudioDir = "/data/audio"
-		}
 	}
 
 	mcpServer := mcp.NewServer(store, deps, logger)

@@ -9,6 +9,22 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `serverVersion` is now stamped from `git describe` at build
+  time** instead of a hand-edited constant. The manual bump kept getting
+  forgotten — the `v0.5.0` and `v0.8.1` tags both shipped binaries
+  reporting the *previous* version in the MCP `initialize` handshake.
+  `serverVersion` is now a `var` defaulting to `"dev"`, injected via
+  `-ldflags` (wired in the Makefile and `docker/Dockerfile.mcp`); release
+  images built after tagging report the tag automatically. See
+  `docs/RELEASING.md`.
+- **`delete_notes` removes retained audio even when whisper is unwired.**
+  `cmd/mcp` only set `AudioDir` inside the `WHISPER_URL` branch, so a
+  whisper-less mcp container silently left `.oga` files on disk despite
+  the tool's "audio is removed" contract. `AudioDir` is now set
+  unconditionally.
+
 ## [0.8.1] — 2026-06-01
 
 ### Changed

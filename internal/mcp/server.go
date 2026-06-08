@@ -25,10 +25,16 @@ import (
 	"github.com/terraincognita07/voicelog/internal/db"
 )
 
-const (
-	serverName    = "voicelog"
-	serverVersion = "0.8.0"
-)
+const serverName = "voicelog"
+
+// serverVersion is what the MCP server reports in the `initialize`
+// handshake. It's a var (not const) so release builds inject the real
+// tag via -ldflags "-X .../internal/mcp.serverVersion=$(git describe)"
+// — wired in the Makefile and docker/Dockerfile.mcp. A plain `go build`
+// leaves the "dev" sentinel, the honest answer for an untagged build.
+// This replaces the old hand-bumped constant that drifted at v0.5.0 and
+// v0.8.1 (see docs/RELEASING.md).
+var serverVersion = "dev"
 
 // mcpNote is the wire shape every voicelog tool returns. Mirrors the
 // fields of db.Note but with JSON tags chosen for Claude's prompt
