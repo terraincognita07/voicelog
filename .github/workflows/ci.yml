@@ -46,7 +46,7 @@ jobs:
       # codecov outage doesn't gate the merge — coverage is a
       # signal, not a release gate.
       - name: upload coverage
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           files: coverage.out
           fail_ci_if_error: false
