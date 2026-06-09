@@ -9,6 +9,20 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-06-09
+
+### Fixed
+
+- **`retranscribe` no longer leaks a partial `.wav` on ffmpeg failure.**
+  The temp WAV is removed even when conversion errors out. On the MCP
+  retranscribe path the source lives under `/data/audio`, where the orphan
+  scan matches only `*.oga` (not `*.oga.wav`), so a failed conversion used
+  to leave an accumulating artifact.
+- Docs: the `make build` row in `docs/RUN-LOCALLY.md` now shows the
+  `-ldflags` version stamp (a plain `go build` reports `serverVersion="dev"`
+  by design); clarified in this changelog that the `0.8.1` `serverVersion`
+  hand-bump never reached shipped binaries.
+
 ## [0.8.2] — 2026-06-08
 
 ### Fixed
