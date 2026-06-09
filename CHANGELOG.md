@@ -9,6 +9,13 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-06-09
+
+### Changed
+
+- Bump `modernc.org/sqlite` 1.51.0 → 1.52.0 (#24). Pure-Go SQLite driver
+  patch update; no schema or API change.
+
 ## [0.8.3] — 2026-06-09
 
 ### Fixed
