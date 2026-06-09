@@ -17,9 +17,14 @@ type AudioRef struct {
 }
 
 // SetAudioPath stores the on-disk path of the retained audio file for
-// the given note. No-op-safe: setting twice overwrites; an empty path
-// effectively clears the field.
+// the given note. No-op-safe: setting twice overwrites. An empty path
+// clears the field to NULL (via ClearAudioPath) rather than writing an
+// empty string, so the janitor's `audio_path IS NOT NULL` worklist never
+// picks up a phantom zero-length path.
 func (db *DB) SetAudioPath(ctx context.Context, id int64, path string) error {
+	if path == "" {
+		return db.ClearAudioPath(ctx, id)
+	}
 	_, err := db.ExecContext(ctx,
 		`UPDATE notes SET audio_path = ? WHERE id = ?`, path, id)
 	return err

@@ -141,6 +141,35 @@ func TestTranscribe_ConverterErrorShortCircuits(t *testing.T) {
 	}
 }
 
+func TestTranscribe_RemovesPartialWAVOnConverterError(t *testing.T) {
+	// Regression: ffmpeg can write a partial/empty .wav and *then* fail.
+	// Transcribe must still delete it. The MCP retranscribe path converts
+	// in-place under /data/audio, where ScanOrphans only catches *.oga
+	// (not *.oga.wav), so a leaked partial would accumulate. Before the
+	// fix the `defer os.Remove` sat after the error return, so this file
+	// survived.
+	srv := fakeServer(t, http.StatusOK, `{"text":"unreachable"}`, &capturedRequest{})
+	partialThenFail := func(_ context.Context, _ string, dst string) error {
+		if err := os.WriteFile(dst, []byte("partial"), 0o600); err != nil {
+			return err
+		}
+		return errors.New("simulated ffmpeg failure after partial write")
+	}
+	c := &Client{URL: srv.URL, HTTP: srv.Client(), toWAV: partialThenFail}
+
+	src := filepath.Join(t.TempDir(), "src.oga")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	if _, err := c.Transcribe(context.Background(), src, ""); err == nil {
+		t.Fatal("Transcribe should surface converter error")
+	}
+	if _, statErr := os.Stat(src + ".wav"); !os.IsNotExist(statErr) {
+		t.Errorf("partial WAV must be cleaned on converter error; Stat err=%v", statErr)
+	}
+}
+
 func TestTranscribe_NilToWAVFieldFallsBackToFFmpeg(t *testing.T) {
 	// The defensive nil-check inside Transcribe lets hand-built Clients
 	// (the few in tests, the RetranscribeDeps construction in MCP) keep

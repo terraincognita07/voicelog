@@ -37,7 +37,10 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   existing policy. Validation, not-found, and `search_notes` FTS5-query
   errors still return verbatim — they describe the caller's own input and
   are path-free, so they stay useful for fixing a query.
-- **MCP `serverVersion` bumped `0.8.0` → `0.8.1`** to track the release tag.
+- **MCP `serverVersion` bumped `0.8.0` → `0.8.1`** to track the release
+  tag. (Superseded — this hand-bump never reached shipped binaries; the
+  constant kept drifting until `0.8.2` moved stamping to `git describe`.
+  See `[0.8.2]`.)
 
 ### Fixed
 

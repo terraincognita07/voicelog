@@ -50,7 +50,7 @@ of those directories follows.
 |---|---|
 | `make test` | Test suite, no race detector, fast loop |
 | `make test-race` | Test suite with race detector + coverage profile |
-| `make build` | `CGO_ENABLED=0 go build ./...` (matches production images) |
+| `make build` | `CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' ./...` — stamps `serverVersion` from `git describe`; matches production images. A plain `go build` leaves `serverVersion="dev"`. |
 | `make vet` / `make lint` | `go vet` / `staticcheck` |
 | `make vuln` | `govulncheck ./...` |
 | `make fmt` / `make tidy` | `go fmt` / `go mod tidy` |

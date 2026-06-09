@@ -16,6 +16,5 @@ coverage.out
 coverage.html
 
 # Local tooling state (do not commit)
-.claude/
 .vscode/
 .idea/

@@ -92,10 +92,12 @@ func isSQLiteBusy(err error) bool {
 //     would fail re-application with "duplicate column name". Closes F2.
 //
 // Backwards compatibility: a DB that was migrated before this tracker
-// existed will re-apply its earlier migrations on first run. Those
-// migrations all use IF NOT EXISTS / CREATE OR REPLACE patterns, so
-// re-application is a no-op. They get recorded after that first run
-// and subsequently skipped.
+// existed will re-apply its earlier migrations on first run. Those early
+// migrations (001_init, 002_vocab) use CREATE ... IF NOT EXISTS, so
+// re-application is a no-op. They get recorded after that first run and
+// subsequently skipped. Every later migration is recorded as it applies,
+// so non-idempotent statements (e.g. the bare ALTER ADD COLUMN in 003/005)
+// run exactly once.
 func (db *DB) Migrate(ctx context.Context, files fs.FS) error {
 	entries, err := fs.ReadDir(files, ".")
 	if err != nil {

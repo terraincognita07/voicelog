@@ -20,9 +20,10 @@ import (
 // timeout. When addr is empty the returned stopper is a no-op — that's
 // the default "off" state.
 //
-// addr MUST resolve to a loopback interface (127.0.0.1, [::1],
-// localhost). Anything else is refused; the operator is expected to use
-// an SSH tunnel for remote profiling. pprof endpoints expose enough
+// addr MUST be a loopback bind target — 127.0.0.1, [::1], or the literal
+// "localhost" (matched without a DNS lookup; see isLoopback). Anything
+// else is refused; the operator is expected to use an SSH tunnel for
+// remote profiling. pprof endpoints expose enough
 // internal state (goroutine stacks, allocation sites, source lines on
 // /debug/pprof/symbol) that we treat them as effectively read-only RCE
 // surface and refuse to expose them broadly by accident.

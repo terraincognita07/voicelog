@@ -86,10 +86,15 @@ func (c *Client) Transcribe(ctx context.Context, srcPath, prompt string) (Result
 		conv = ffmpegToWAV
 	}
 	wavPath := srcPath + ".wav"
+	// Register cleanup before the convert call: a failed ffmpeg run can
+	// still leave a partial/empty .wav behind. This matters most on the
+	// MCP retranscribe path, which converts in-place under /data/audio
+	// where ScanOrphans only catches *.oga (not *.oga.wav), so a leaked
+	// partial would accumulate. os.Remove of a never-created file no-ops.
+	defer os.Remove(wavPath)
 	if err := conv(ctx, srcPath, wavPath); err != nil {
 		return Result{}, fmt.Errorf("ffmpeg convert: %w", err)
 	}
-	defer os.Remove(wavPath)
 	return c.transcribeWAV(ctx, wavPath, prompt)
 }
 

@@ -61,7 +61,7 @@ Strict — enforced by review, not by build:
 | `internal/diskguard` | platform-specific syscall | depend on anything except `syscall` |
 | `internal/config` | startup env parsing (`MustEnv`, `ParseFloat01`) | hold runtime state |
 | `internal/promptbuilder` | assemble whisper prompt (base + vocab) | talk to Telegram / MCP |
-| `internal/diag` | gated pprof listener (`PPROF_ADDR`, loopback-only) | run by default / bind non-loopback |
+| `internal/diag` | gated pprof listener (`PPROF_ADDR`, loopback-only) | run by default / bind non-loopback / import anything beyond stdlib |
 
 ## Persistence
 
