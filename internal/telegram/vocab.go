@@ -336,6 +336,11 @@ func (tb *Bot) saveTextNote(c tele.Context, msg *tele.Message) error {
 	if text == "" {
 		return nil
 	}
+	// Same shutdown drain as voice capture: don't lose a typed note to SIGTERM.
+	if !tb.beginCapture() {
+		return nil
+	}
+	defer tb.endCapture()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	id, err := tb.db.InsertNote(ctx, text, 0)

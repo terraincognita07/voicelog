@@ -37,12 +37,14 @@ type RetranscribeDeps struct {
 // retranscribe call. old_text / new_text let it summarize the diff;
 // confidence_overall surfaces whether the new run was actually better.
 type retranscribeResponse struct {
-	NoteID               int64    `json:"note_id"`
-	OldText              string   `json:"old_text"`
-	NewText              string   `json:"new_text"`
-	ConfidenceOverall    *float64 `json:"confidence_overall,omitempty"`
-	ConfidenceMin        *float64 `json:"confidence_min,omitempty"`
-	SuspectHallucination bool     `json:"suspect_hallucination,omitempty"`
+	NoteID  int64  `json:"note_id"`
+	OldText string `json:"old_text"`
+	NewText string `json:"new_text"`
+	// Always present per docs/MCP.md (null when the new run had no segments);
+	// no omitempty so the documented 6-field result shape is stable.
+	ConfidenceOverall    *float64 `json:"confidence_overall"`
+	ConfidenceMin        *float64 `json:"confidence_min"`
+	SuspectHallucination bool     `json:"suspect_hallucination"`
 }
 
 func registerRetranscribe(s *server.MCPServer, store *db.DB, deps RetranscribeDeps, logger *slog.Logger) {

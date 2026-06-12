@@ -314,6 +314,10 @@ func (tb *Bot) cbEditCancel(c tele.Context) error {
 // message in place, and deletes the user's typed message. The edit state is
 // cleared once the flow is done.
 func (tb *Bot) continueEdit(msg *tele.Message, pe *pendingEdit) error {
+	// Serialize against cbEditPick (see editFlowMu): advanceEdit reads and
+	// writes pe.step/find/pickIdx, which a concurrent picker tap also mutates.
+	tb.editFlowMu.Lock()
+	defer tb.editFlowMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	body, kb, done, err := tb.advanceEdit(ctx, pe, msg.Text)
@@ -570,6 +574,10 @@ func (tb *Bot) cbEditPick(c tele.Context) error {
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
+	// Serialize against continueEdit: both mutate the shared pendingEdit's
+	// fields and telebot dispatches each update on its own goroutine.
+	tb.editFlowMu.Lock()
+	defer tb.editFlowMu.Unlock()
 	pe := tb.currentEditState()
 	if pe == nil || pe.noteID != id || pe.find == "" {
 		// editState was lost (e.g. a restart) — the picker buttons are stale.
@@ -609,7 +617,7 @@ func (tb *Bot) tryEditMsg(msg tele.Editable, what interface{}, opts ...interface
 		if strings.Contains(err.Error(), "message is not modified") {
 			return
 		}
-		tb.logger.Warn("bot.Edit failed", "err", err)
+		tb.logger.Warn("bot.Edit failed", "err", tb.redactErr(err))
 	}
 }
 
@@ -621,6 +629,6 @@ func (tb *Bot) deleteMsg(msg *tele.Message) {
 		return
 	}
 	if err := tb.bot.Delete(msg); err != nil {
-		tb.logger.Debug("delete user edit input", "err", err)
+		tb.logger.Debug("delete user edit input", "err", tb.redactErr(err))
 	}
 }

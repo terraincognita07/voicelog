@@ -40,17 +40,21 @@ var serverVersion = "dev"
 // fields of db.Note but with JSON tags chosen for Claude's prompt
 // surface (snake_case, optional fields omitted instead of zero-valued).
 type mcpNote struct {
-	ID                   int64    `json:"id"`
-	CreatedAtISO         string   `json:"created_at_iso"`
-	RawText              string   `json:"raw_text"`
-	DurationSec          int64    `json:"duration_sec"`
-	Status               string   `json:"status,omitempty"`
-	Rank                 float64  `json:"rank,omitempty"`
-	Snippet              string   `json:"snippet,omitempty"`
-	ConfidenceOverall    *float64 `json:"confidence_overall,omitempty"` // mean avg_logprob; nil = unknown
-	ConfidenceMin        *float64 `json:"confidence_min,omitempty"`     // worst segment avg_logprob
-	SuspectHallucination bool     `json:"suspect_hallucination,omitempty"`
-	Tags                 []string `json:"tags,omitempty"` // category labels (analysis-side overlay)
+	ID           int64   `json:"id"`
+	CreatedAtISO string  `json:"created_at_iso"`
+	RawText      string  `json:"raw_text"`
+	DurationSec  int64   `json:"duration_sec"`
+	Status       string  `json:"status,omitempty"`
+	Rank         float64 `json:"rank,omitempty"`
+	Snippet      string  `json:"snippet,omitempty"`
+	// These three are always present per docs/MCP.md: nil confidence marshals
+	// to null (note predates the verbose-JSON pipeline), suspect is a real
+	// bool. NO omitempty — a missing field and "null"/"false" are different
+	// wire contracts, and the docs promise presence.
+	ConfidenceOverall    *float64 `json:"confidence_overall"` // mean avg_logprob; null = unknown
+	ConfidenceMin        *float64 `json:"confidence_min"`     // worst segment avg_logprob; null = unknown
+	SuspectHallucination bool     `json:"suspect_hallucination"`
+	Tags                 []string `json:"tags,omitempty"` // category labels; omitted when empty (per docs)
 }
 
 func toMCP(n db.Note) mcpNote {

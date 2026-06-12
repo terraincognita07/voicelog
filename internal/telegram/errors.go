@@ -18,10 +18,32 @@ import (
 //
 // errReply sends as a new message; errToast surfaces as a callback popup.
 
+// redactToken strips the bot token from s before it reaches a log sink.
+// telebot embeds the token in every API URL ("/bot<TOKEN>/…") and Go's
+// *url.Error keeps that URL verbatim on transport failures, so an
+// unsanitized err.Error() would leak BOT_TOKEN into the logs — a violation
+// of the hard "never log secrets" invariant. Cheap no-op when token is "".
+func redactToken(s, token string) string {
+	if token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, token, "<bot-token>")
+}
+
+// redactErr renders err for logging with the bot token stripped. Returns ""
+// for a nil err. Use this at every sink that logs an error which may have
+// originated from a telebot API call (Send/Edit/Download/Delete/…).
+func (tb *Bot) redactErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return redactToken(err.Error(), tb.token)
+}
+
 // userErrMsg is the single source of truth for converting an internal
-// error label to a chat-safe string. Always logs the raw err.
+// error label to a chat-safe string. Always logs the raw err (token-redacted).
 func (tb *Bot) userErrMsg(label string, err error) string {
-	tb.logger.Error(label, "err", err)
+	tb.logger.Error(label, "err", tb.redactErr(err))
 	if msg, ok := tb.msg.Errors[label]; ok {
 		return "⚠ " + msg
 	}
@@ -57,6 +79,6 @@ func (tb *Bot) tryEdit(c tele.Context, what any, opts ...any) {
 		if strings.Contains(err.Error(), "message is not modified") {
 			return
 		}
-		tb.logger.Warn("c.Edit failed", "err", err)
+		tb.logger.Warn("c.Edit failed", "err", tb.redactErr(err))
 	}
 }

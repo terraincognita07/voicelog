@@ -57,9 +57,12 @@ deployment. Specifically:
   record who accessed what. If you need "who read note #42 in the last
   30 days?" — there's no answer to give. Fine for personal use, not for
   compliance.
-- **Audio in tmp.** During transcription each clip lives ~10 seconds at
-  `/tmp/voicelog-*/src.wav`. A co-tenant with shell access to the container
-  could read it. No encryption-at-rest.
+- **Audio in tmp.** During transcription each clip lives at
+  `/tmp/voicelog-*/src(.wav)` — normally a few seconds, bounded by the
+  10-minute transcription timeout. The per-capture cleanup removes the dir on
+  return; a crash mid-transcription leaves it until the next bot startup, which
+  sweeps stale `voicelog-*` dirs. A co-tenant with shell access to the
+  container could read it in that window. No encryption-at-rest.
 - **Audio retention is plaintext on disk.** When `AUDIO_RETENTION_DAYS > 0`,
   the bot persists each voice's original `.oga` at `AUDIO_DIR/<note_id>.oga`
   with file mode `0600`. No encryption — host-disk encryption is your
