@@ -70,7 +70,10 @@ func registerListPending(s *server.MCPServer, store *db.DB, logger *slog.Logger)
 		defer cancel()
 		limit := 50
 		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
-			limit = int(v)
+			if v > float64(db.MaxNotesInRange) {
+				v = float64(db.MaxNotesInRange) // clamp the float BEFORE int() — a huge
+			} //                                  value would overflow to a negative,
+			limit = int(v) //                     which SQLite treats as "no limit".
 		}
 		notes, err := store.ListPending(ctx, limit)
 		if err != nil {
@@ -184,6 +187,9 @@ func registerSearch(s *server.MCPServer, store *db.DB, logger *slog.Logger) {
 		}
 		limit := 20
 		if v, err := req.RequireFloat("limit"); err == nil && v > 0 {
+			if v > float64(db.MaxNotesInRange) {
+				v = float64(db.MaxNotesInRange) // clamp before int() — see list_pending
+			}
 			limit = int(v)
 		}
 		hits, err := store.SearchNotes(ctx, query, limit)

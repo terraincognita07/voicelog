@@ -9,6 +9,53 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Security
+
+- **BOT_TOKEN no longer leaks into logs.** telebot embeds the token in every
+  API URL (`/bot<TOKEN>/…`) and Go's `*url.Error` keeps that URL verbatim on
+  transport failures, so an unsanitized error log (e.g. a failed `Download` or
+  `Send`) could write the token to `docker logs`. All telebot-facing error
+  sinks now redact it, and the bot installs a redacting `OnError` in place of
+  telebot's default `log.Println` handler.
+- **MCP HTTP server hardened.** Request bodies are capped
+  (`http.MaxBytesHandler`, 1 MiB) so a valid-token POST can't OOM the process
+  via mcp-go's `io.ReadAll`; added `ReadTimeout` and `IdleTimeout` (no
+  `WriteTimeout` — retranscribe streams for minutes).
+- **`.dockerignore` added.** Keeps `.env`, `data/*.db`, and local agent files
+  out of the Docker build context, so a local operator build no longer bakes
+  secrets/journal into the build-stage layer + BuildKit cache.
+
+### Fixed
+
+- **Data race in the button-driven edit flow.** A picker tap (`cbEditPick`)
+  and a typed step (`continueEdit`) could mutate the same in-flight edit's
+  fields concurrently (telebot dispatches each update on its own goroutine);
+  `editMu` guarded only the pointer slot, not the fields. A new `editFlowMu`
+  serializes the two flows; a concurrent regression test now exercises it
+  under `-race`.
+- **Graceful shutdown no longer drops an in-flight capture.** On SIGTERM the
+  bot now stops the poller, drains in-flight voice/text captures (bounded, so
+  a stuck whisper can't hang shutdown), then cancels the background loops —
+  the note is persisted instead of lost with its already-confirmed Telegram
+  offset. Fixed the defer ordering that closed the DB before stopping the
+  janitor/maintenance loops.
+- **Stale capture temp dirs are reclaimed.** A crash mid-transcription left
+  `/tmp/voicelog-*` behind (the per-capture `defer` only runs on a clean
+  return); startup now sweeps them.
+- **MCP `search_notes` / `list_pending_notes` limits are clamped**
+  server-side to `MaxNotesInRange` (500). A huge `limit` float no longer
+  overflows `int()` into a negative value that SQLite treats as "no limit".
+
+### Changed
+
+- **MCP note objects always carry `confidence_overall`, `confidence_min`
+  (null when unknown) and `suspect_hallucination` (bool).** Dropped the
+  `omitempty` that silently omitted these, matching the `docs/MCP.md`
+  contract; a decode-into-map test guards against re-drift.
+- **CI: `staticcheck` pinned to `2026.1`** (first release with Go 1.26
+  support), matching the pin-everything policy already applied to
+  `govulncheck` and `semgrep`.
+
 ## [0.8.4] — 2026-06-09
 
 ### Changed

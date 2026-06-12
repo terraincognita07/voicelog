@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/terraincognita07/voicelog/internal/audio"
 	"github.com/terraincognita07/voicelog/internal/config"
@@ -118,6 +119,14 @@ func main() {
 		}
 	}
 
+	// Reclaim capture scratch dirs orphaned by a previous run that crashed
+	// mid-transcription (the per-capture defer only fires on a clean return).
+	if n, err := telegram.SweepStaleTempDirs(os.TempDir(), logger); err != nil {
+		logger.Warn("tmp sweep failed", "err", err)
+	} else if n > 0 {
+		logger.Info("removed stale capture tmp dirs", "count", n)
+	}
+
 	w := whisper.New(whisperURL)
 	w.Logger = logger // enables one-time "no segments" warning
 
@@ -157,5 +166,15 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	sig := <-sigCh
 	logger.Info("shutting down", "signal", sig.String())
+
+	// Ordered shutdown — don't lean on defer LIFO, which would close the DB
+	// before the background loops stop:
+	//   1) Stop() halts the poller so no new updates dispatch;
+	//   2) DrainCaptures lets an in-flight transcription finish its DB write
+	//      (the Telegram offset is already confirmed, so an abandoned capture
+	//      is lost) — bounded so a stuck whisper can't hang shutdown;
+	//   3) cancel() stops the audio janitor before the deferred store.Close().
 	bot.Stop()
+	bot.DrainCaptures(20 * time.Second)
+	cancel()
 }

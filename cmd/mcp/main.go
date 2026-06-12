@@ -22,6 +22,11 @@ import (
 
 const minTokenLen = 16
 
+// maxRequestBytes caps an incoming MCP request body. Tool calls are small
+// JSON-RPC messages; 1 MiB leaves ample room (delete_notes with ~100k ids)
+// while preventing an unbounded io.ReadAll from exhausting memory.
+const maxRequestBytes = 1 << 20
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -92,9 +97,20 @@ func main() {
 
 	addr := ":" + port
 	httpSrv := &http.Server{
-		Addr:              addr,
-		Handler:           mcp.BearerAuth(token, mcpHTTP),
+		Addr: addr,
+		// Cap the request body so a holder of a valid token can't OOM the
+		// process with one giant POST (mcp-go slurps the body via io.ReadAll).
+		// MaxBytesHandler swaps r.Body for a MaxBytesReader per request; MCP
+		// tool calls are small JSON, 1 MiB is generous.
+		Handler:           http.MaxBytesHandler(mcp.BearerAuth(token, mcpHTTP), maxRequestBytes),
 		ReadHeaderTimeout: 10 * time.Second,
+		// ReadTimeout bounds a slow-loris body; IdleTimeout reaps parked
+		// keep-alive connections so an unauthenticated client can't hoard fds.
+		ReadTimeout: 30 * time.Second,
+		IdleTimeout: 120 * time.Second,
+		// Deliberately no WriteTimeout: retranscribe streams a response that
+		// can take minutes (a whisper re-run). A wall-clock write cap would
+		// truncate it — the per-tool context timeouts bound handlers instead.
 	}
 
 	// DB maintenance (WAL checkpoint + monthly VACUUM). Runs only here in

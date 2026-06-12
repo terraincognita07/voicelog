@@ -1,0 +1,35 @@
+# Keep secrets, the private journal, and local-only files OUT of the Docker
+# build context. Without this, the build-stage `COPY . .` bakes them into
+# intermediate image layers and the BuildKit cache on a local operator build.
+# (The final images are clean — multi-stage copies only the compiled binary —
+# but the build-stage layer is recoverable via `docker history` / cache export,
+# so the tokens and journal would leak if that layer is ever pushed or shared.)
+#
+# Only clearly-sensitive or build-irrelevant paths are listed. Go sources,
+# go.mod/go.sum, and the embedded internal/db/migrations/*.sql stay in context.
+
+# Secrets & runtime config
+.env
+.env.*
+!.env.example
+
+# The private journal database — the whole asset; never put it in build context
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Version control & CI (not needed to compile)
+.git
+.gitignore
+.gitattributes
+.github
+
+# Local-only agent brain (already gitignored; keep out of the image too)
+.agents
+.claude
+AI_CONTEXT.md
+CLAUDE.md
+
+# Build / coverage artifacts
+coverage.out

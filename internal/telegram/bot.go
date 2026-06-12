@@ -24,6 +24,12 @@ import (
 	"github.com/terraincognita07/voicelog/internal/whisper"
 )
 
+// tmpDirPattern is the os.MkdirTemp pattern for a capture's scratch dir (the
+// "*" is replaced by random chars). SweepStaleTempDirs reuses the prefix to
+// reclaim dirs orphaned by a crash mid-transcription — the per-capture
+// `defer os.RemoveAll` only runs on a clean return.
+const tmpDirPattern = "voicelog-*"
+
 // dedupWindow is how recent a note must be (by created_at) to be
 // considered the same audio as a freshly arriving voice message. 5
 // minutes is long enough to catch double-taps on slow mobile networks
@@ -45,6 +51,7 @@ type Bot struct {
 	whisper             transcriber
 	allowedUser         int64
 	logger              *slog.Logger
+	token               string // bot token; stripped from any logged telebot error (never log secrets)
 	msg                 messages
 	basePrompt          string
 	audioDir            string  // persistent audio storage; "" = retention disabled
@@ -69,6 +76,25 @@ type Bot struct {
 	// simply replaces it. nil means no edit is in progress. Guarded by editMu.
 	editState *pendingEdit
 	editMu    sync.Mutex
+
+	// editFlowMu serializes the two flows that MUTATE an in-flight
+	// pendingEdit's fields — cbEditPick (a picker tap) and continueEdit (a
+	// typed step). telebot runs every update in its own goroutine, so without
+	// this both can write pe.step/find/pickIdx through the shared pointer at
+	// once (a data race; a torn string header could even panic). editMu only
+	// guards the pointer slot, not the pointed-to fields. Lock order is always
+	// editFlowMu → editMu (the editState accessors take editMu); never reverse.
+	editFlowMu sync.Mutex
+
+	// Graceful-shutdown drain for in-flight captures. A capture (voice or
+	// text) holds a captureWG token for its whole lifetime; DrainCaptures
+	// flips captureClosed under captureMu — which blocks new tokens and
+	// rules out the Add-after-Wait hazard — then waits for the outstanding
+	// ones. A SIGTERM mid-transcription thus still persists the note instead
+	// of losing it (Telegram already confirmed the update offset).
+	captureMu     sync.Mutex
+	captureWG     sync.WaitGroup
+	captureClosed bool
 
 	// pendingTagRef remembers which card a tag-add force-reply came from, so the
 	// reply can re-render the exact tags sub-view (the prompt only round-trips
@@ -111,6 +137,13 @@ func New(token string, cfg Config, allowedUser int64, store *db.DB, w transcribe
 	b, err := tele.NewBot(tele.Settings{
 		Token:  token,
 		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		// telebot builds every API URL as ".../bot<TOKEN>/..." and Go's
+		// *url.Error keeps that URL verbatim on transport failures, so the
+		// default OnError (a stdlib log.Println) would leak BOT_TOKEN to
+		// stderr. Replace it with a redacting slog sink.
+		OnError: func(err error, _ tele.Context) {
+			logger.Error("telebot handler error", "err", redactToken(err.Error(), token))
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init telebot: %w", err)
@@ -125,6 +158,7 @@ func New(token string, cfg Config, allowedUser int64, store *db.DB, w transcribe
 		whisper:             w,
 		allowedUser:         allowedUser,
 		logger:              logger,
+		token:               token,
 		msg:                 pickLocale(cfg.Locale),
 		basePrompt:          strings.TrimSpace(cfg.BasePrompt),
 		audioDir:            strings.TrimSpace(cfg.AudioDir),
@@ -161,6 +195,58 @@ func (tb *Bot) buildMenu() {
 
 func (tb *Bot) Start() { tb.bot.Start() }
 func (tb *Bot) Stop()  { tb.bot.Stop() }
+
+// beginCapture registers an in-flight capture, returning false if shutdown has
+// already started (caller should drop the work). Pairs with endCapture.
+func (tb *Bot) beginCapture() bool {
+	tb.captureMu.Lock()
+	defer tb.captureMu.Unlock()
+	if tb.captureClosed {
+		return false
+	}
+	tb.captureWG.Add(1)
+	return true
+}
+
+func (tb *Bot) endCapture() { tb.captureWG.Done() }
+
+// SweepStaleTempDirs removes capture scratch dirs (tmpDirPattern) left in dir
+// by a previous run that crashed mid-transcription. Returns the count removed.
+// Safe to call once at startup: this process hasn't created any yet and the
+// bot is single-instance. Per-entry remove failures are logged, not fatal.
+func SweepStaleTempDirs(dir string, logger *slog.Logger) (int, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, tmpDirPattern))
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, d := range matches {
+		if err := os.RemoveAll(d); err != nil {
+			logger.Warn("tmp sweep: remove failed", "dir", d, "err", err)
+			continue
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// DrainCaptures blocks new captures and waits up to timeout for in-flight ones
+// to finish persisting. Call it during shutdown AFTER Stop() (poller halted, so
+// no new captures arrive) and BEFORE closing the DB. A capture stuck in whisper
+// past the timeout is abandoned with a warning rather than hanging shutdown.
+func (tb *Bot) DrainCaptures(timeout time.Duration) {
+	tb.captureMu.Lock()
+	tb.captureClosed = true
+	tb.captureMu.Unlock()
+
+	done := make(chan struct{})
+	go func() { tb.captureWG.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		tb.logger.Warn("shutdown: timed out draining in-flight captures")
+	}
+}
 
 func (tb *Bot) registerHandlers() {
 	tb.bot.Use(tb.allowOnly())
@@ -224,7 +310,7 @@ func (tb *Bot) syncMenu() {
 		cmds = append(cmds, tele.Command{Text: h.Cmd, Description: h.Desc})
 	}
 	if err := tb.bot.SetCommands(cmds); err != nil {
-		tb.logger.Warn("setCommands", "err", err)
+		tb.logger.Warn("setCommands", "err", tb.redactErr(err))
 		return
 	}
 	tb.logger.Info("setCommands ok", "count", len(cmds))
@@ -282,6 +368,13 @@ func (tb *Bot) onAudio(c tele.Context) error {
 }
 
 func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error {
+	// Register with the shutdown drain so a SIGTERM lands AFTER this note is
+	// persisted, not in the middle. If shutdown already started, drop it.
+	if !tb.beginCapture() {
+		return nil
+	}
+	defer tb.endCapture()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -310,7 +403,7 @@ func (tb *Bot) processFile(c tele.Context, file *tele.File, duration int) error 
 	// short clips, and a fresh shot will be sent if we send a new message.
 	_ = c.Notify(tele.Typing)
 
-	tmpDir, err := os.MkdirTemp("", "voicelog-*")
+	tmpDir, err := os.MkdirTemp("", tmpDirPattern)
 	if err != nil {
 		return tb.errReply(c, "tmp dir", err)
 	}

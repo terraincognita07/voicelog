@@ -27,7 +27,11 @@ jobs:
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1
         with:
-          version: latest
+          # Pinned like the other gate tools (govulncheck, semgrep) so a fresh
+          # staticcheck release can't silently change the rule set and break an
+          # unrelated PR. 2026.1 is the first release with Go 1.26 support; bump
+          # intentionally alongside the go.mod toolchain.
+          version: "2026.1"
           install-go: false
 
       - name: go build
