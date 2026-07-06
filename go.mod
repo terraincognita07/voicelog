@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/kljensen/snowball v0.10.0
-	github.com/mark3labs/mcp-go v0.55.0
+	github.com/mark3labs/mcp-go v0.55.1
 	gopkg.in/telebot.v3 v3.3.8
 	modernc.org/sqlite v1.53.0
 )
