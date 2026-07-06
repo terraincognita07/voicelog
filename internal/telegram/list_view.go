@@ -568,7 +568,12 @@ func (tb *Bot) cbPendingClearYes(c tele.Context) error {
 		return tb.errToast(c, "clear", err)
 	}
 	tb.logger.Info("pending deleted", "n", n)
-	body, kb, rerr := tb.renderPending(ctx, st)
+	// Fresh budget for the re-render: a large clear-all can spend most of the
+	// delete ctx, and renderPending's internal DB deadline is capped by its
+	// parent — reusing ctx here can fail the refresh after a successful clear.
+	rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer rcancel()
+	body, kb, rerr := tb.renderPending(rctx, st)
 	if rerr != nil {
 		return tb.errToast(c, "refresh", rerr)
 	}

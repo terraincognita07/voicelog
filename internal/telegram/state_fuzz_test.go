@@ -98,7 +98,7 @@ func FuzzParseTagRemove(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		if ref, _, ok := parseTagRemove(in); ok && (ref.id <= 0 || (ref.kind != "p" && ref.kind != "r")) {
+		if ref, _, _, ok := parseTagRemove(in); ok && (ref.id <= 0 || (ref.kind != "p" && ref.kind != "r")) {
 			t.Errorf("parseTagRemove(%q) ok but invalid ref %+v", in, ref)
 		}
 	})

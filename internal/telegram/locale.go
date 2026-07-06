@@ -66,6 +66,7 @@ type messages struct {
 	CardToListBtn      string                                                  // [⬅ to list] on the card
 	CardBackBtn        string                                                  // [⬅ Back] tags sub-view → card
 	CardTagsHeader     func(id int64, n int) string                            // tags sub-view header
+	TagListChanged     string                                                  // toast when a [tag ❌] tap hits a stale list
 	TagAddPrompt       func(id int64) string                                   // force-reply add-tags prompt; id is its only number
 	TagsAdded          func(added int) string                                  // confirmation after a manual tag add
 	Status             func(s string) string                                   // localize "pending"/"analyzed"
@@ -257,6 +258,7 @@ var locales = map[string]messages{
 			}
 			return fmt.Sprintf("🏷 Tags of note #%d (tap a tag to remove):", id)
 		},
+		TagListChanged: "Tags changed meanwhile — list refreshed, tap again.",
 		TagAddPrompt: func(id int64) string {
 			return fmt.Sprintf("🏷 Note #%d — reply with tags separated by spaces.", id)
 		},
@@ -491,6 +493,7 @@ var locales = map[string]messages{
 			}
 			return fmt.Sprintf("🏷 Теги заметки #%d (тапни тег, чтобы снять):", id)
 		},
+		TagListChanged: "Теги успели измениться — список обновлён, тапни ещё раз.",
 		TagAddPrompt: func(id int64) string {
 			return fmt.Sprintf("🏷 Заметка #%d — пришли теги через пробел.", id)
 		},

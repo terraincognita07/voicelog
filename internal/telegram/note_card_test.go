@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -85,14 +86,117 @@ func TestCbCardTagRemove(t *testing.T) {
 	if _, err := tb.db.AddTags(ctx, id, []string{"идея", "todo"}); err != nil {
 		t.Fatalf("seed tags: %v", err)
 	}
+	tags, _ := tb.db.TagsForNote(ctx, id)
 
 	ref := cardRef{id: id, kind: "p", state: pendingState{Limit: pendingPageSize}.encode()}
-	fc := &fakeCtx{callback: &tele.Callback{Data: ref.encodeTagRemove(0)}}
+	fc := &fakeCtx{callback: &tele.Callback{Data: ref.encodeTagRemove(0, tags[0])}}
+	if err := tb.cbCardTagRemove(fc); err != nil {
+		t.Fatalf("cbCardTagRemove: %v", err)
+	}
+	if got, _ := tb.db.TagsForNote(ctx, id); len(got) != 1 {
+		t.Errorf("want 1 tag after remove, got %v", got)
+	}
+}
+
+// TestCbCardTagRemove_StaleIndexDoesNotDeleteWrongTag: the [tag ❌] button
+// bakes the tag's index at render time; if the list shifts before the tap
+// (e.g. Claude removes another tag via MCP untag_note), the fingerprint
+// check must refuse the delete instead of silently removing the neighbour
+// that slid into that position.
+func TestCbCardTagRemove_StaleIndexDoesNotDeleteWrongTag(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "x", 0)
+	if _, err := tb.db.AddTags(ctx, id, []string{"apple", "banana", "cherry"}); err != nil {
+		t.Fatalf("seed tags: %v", err)
+	}
+
+	// Render-time truth: [apple, banana, cherry]; the button targets banana@1.
+	ref := cardRef{id: id, kind: "p", state: pendingState{Limit: pendingPageSize}.encode()}
+	staleBtn := ref.encodeTagRemove(1, "banana")
+
+	// Concurrent change lands first: apple is removed, list shifts to
+	// [banana, cherry] — index 1 now points at cherry.
+	if _, err := tb.db.RemoveTag(ctx, id, "apple"); err != nil {
+		t.Fatalf("concurrent remove: %v", err)
+	}
+
+	fc := &fakeCtx{callback: &tele.Callback{Data: staleBtn}}
+	if err := tb.cbCardTagRemove(fc); err != nil {
+		t.Fatalf("cbCardTagRemove: %v", err)
+	}
+	tags, _ := tb.db.TagsForNote(ctx, id)
+	if len(tags) != 2 || tags[0] != "banana" || tags[1] != "cherry" {
+		t.Fatalf("stale tap must not delete anything, got %v", tags)
+	}
+	// The user gets a toast + a refreshed tags view, not silence.
+	if len(fc.responses) != 1 || fc.responses[0] == nil || fc.responses[0].Text != tb.msg.TagListChanged {
+		t.Errorf("want TagListChanged toast, got %+v", fc.responses)
+	}
+	if _, ok := fc.lastEdit(); !ok {
+		t.Error("stale tap should still re-render the tags view")
+	}
+}
+
+// TestCbCardTagRemove_OutOfRangeIndexIsStale: a stale button whose index no
+// longer exists (list shrank) is a no-op with the same toast.
+func TestCbCardTagRemove_OutOfRangeIndexIsStale(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "x", 0)
+	if _, err := tb.db.AddTags(ctx, id, []string{"solo"}); err != nil {
+		t.Fatalf("seed tags: %v", err)
+	}
+
+	ref := cardRef{id: id, kind: "p", state: pendingState{Limit: pendingPageSize}.encode()}
+	fc := &fakeCtx{callback: &tele.Callback{Data: ref.encodeTagRemove(5, "ghost")}}
 	if err := tb.cbCardTagRemove(fc); err != nil {
 		t.Fatalf("cbCardTagRemove: %v", err)
 	}
 	if tags, _ := tb.db.TagsForNote(ctx, id); len(tags) != 1 {
-		t.Errorf("want 1 tag after remove, got %v", tags)
+		t.Errorf("out-of-range tap must not delete, got %v", tags)
+	}
+	if len(fc.responses) != 1 || fc.responses[0] == nil || fc.responses[0].Text != tb.msg.TagListChanged {
+		t.Errorf("want TagListChanged toast, got %+v", fc.responses)
+	}
+}
+
+// TestCbCardTagRemove_LegacyPayloadIsInert: buttons rendered by a
+// pre-fingerprint binary survive deploys inside Telegram chats. Their old
+// payloads (`id:kind:idx:state`, no fingerprint) must degrade to a no-delete
+// refresh — the old state chunk lands in the fp slot and can never match the
+// fixed 8-hex digest — or a BadID toast for the bare 3-part shape. Never a
+// wrong delete.
+func TestCbCardTagRemove_LegacyPayloadIsInert(t *testing.T) {
+	tb := newTestBot(t)
+	ctx := context.Background()
+	id, _ := tb.db.InsertNote(ctx, "x", 0)
+	if _, err := tb.db.AddTags(ctx, id, []string{"apple", "banana"}); err != nil {
+		t.Fatalf("seed tags: %v", err)
+	}
+	idStr := strconv.FormatInt(id, 10)
+
+	cases := []struct {
+		name, data, wantToast string
+	}{
+		{"pending, no expanded day", idStr + ":p:0:20", tb.msg.TagListChanged},
+		{"pending, expanded day", idStr + ":p:0:20:2026-05-26", tb.msg.TagListChanged},
+		{"recent state", idStr + ":r:1:all:10:", tb.msg.TagListChanged},
+		{"bare three parts", idStr + ":p:0", tb.msg.BadID},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fc := &fakeCtx{callback: &tele.Callback{Data: c.data}}
+			if err := tb.cbCardTagRemove(fc); err != nil {
+				t.Fatalf("cbCardTagRemove: %v", err)
+			}
+			if tags, _ := tb.db.TagsForNote(ctx, id); len(tags) != 2 {
+				t.Fatalf("legacy payload must never delete, got %v", tags)
+			}
+			if len(fc.responses) != 1 || fc.responses[0] == nil || fc.responses[0].Text != c.wantToast {
+				t.Errorf("want toast %q, got %+v", c.wantToast, fc.responses)
+			}
+		})
 	}
 }
 

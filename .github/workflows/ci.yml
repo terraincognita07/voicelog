@@ -14,9 +14,9 @@ jobs:
     name: test & lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26'
           cache: true
@@ -24,15 +24,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: staticcheck
-        uses: dominikh/staticcheck-action@v1
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           # Pinned like the other gate tools (govulncheck, semgrep) so a fresh
-          # staticcheck release can't silently change the rule set and break an
-          # unrelated PR. 2026.1 is the first release with Go 1.26 support; bump
+          # linter release can't silently change the rule set and break an
+          # unrelated PR. Bundles staticcheck (the previous standalone step)
+          # plus the retired Go Report Card checks — see .golangci.yml. Bump
           # intentionally alongside the go.mod toolchain.
-          version: "2026.1"
-          install-go: false
+          version: v2.12.2
 
       - name: go build
         env:
@@ -50,7 +50,7 @@ jobs:
       # codecov outage doesn't gate the merge — coverage is a
       # signal, not a release gate.
       - name: upload coverage
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           files: coverage.out
           fail_ci_if_error: false
@@ -60,9 +60,9 @@ jobs:
     name: govulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: '1.26'
           cache: true
@@ -83,12 +83,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: build bot image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/Dockerfile.bot
@@ -97,7 +97,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: build mcp image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/Dockerfile.mcp
@@ -111,7 +111,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       # Run semgrep via `docker run` from the host instead of using
       # GitHub's `container:` field — the semgrep image is Python-
@@ -151,11 +151,11 @@ jobs:
     steps:
       # Full history needed — committed secrets can be in any
       # ancestor commit; a shallow checkout would miss them.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

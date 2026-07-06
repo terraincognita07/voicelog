@@ -41,11 +41,11 @@ func TestCardRefRoundtrip(t *testing.T) {
 			t.Errorf("cardRef roundtrip: in=%+v got=%+v ok=%v (encoded=%q)", in, got, ok, in.encode())
 		}
 	}
-	// tag-remove carries an index alongside the ref.
+	// tag-remove carries an index + tag fingerprint alongside the ref.
 	ref := cardRef{id: 9, kind: "r", state: "all:10:"}
-	gotRef, idx, ok := parseTagRemove(ref.encodeTagRemove(3))
-	if !ok || gotRef != ref || idx != 3 {
-		t.Errorf("tag-remove roundtrip: ref=%+v idx=%d ok=%v", gotRef, idx, ok)
+	gotRef, idx, fp, ok := parseTagRemove(ref.encodeTagRemove(3, "идея"))
+	if !ok || gotRef != ref || idx != 3 || fp != tagFingerprint("идея") {
+		t.Errorf("tag-remove roundtrip: ref=%+v idx=%d fp=%q ok=%v", gotRef, idx, fp, ok)
 	}
 	// Garbage / bad kind is rejected.
 	if _, ok := parseCardRef("notanint:p:"); ok {
@@ -72,7 +72,7 @@ func TestParseStateGarbageDoesNotPanic(t *testing.T) {
 		_ = parsePendingState(c)
 		_ = parseRecentState(c)
 		_, _ = parseCardRef(c)
-		_, _, _ = parseTagRemove(c)
+		_, _, _, _ = parseTagRemove(c)
 		_, _ = parseListRef(c)
 	}
 }
@@ -201,7 +201,9 @@ func TestEncodeLimitsFit64Bytes(t *testing.T) {
 	if got := len(ref.encode()); got > 64 {
 		t.Errorf("cardRef.encode = %d bytes, exceeds Telegram 64-byte cap", got)
 	}
-	if got := len(ref.encodeTagRemove(99)); got > 64 {
+	// Tag length doesn't matter — the payload carries a fixed-width
+	// fingerprint, not the tag — but pass a long one to prove it.
+	if got := len(ref.encodeTagRemove(99, "очень-длинный-тег-за-пределами-бюджета")); got > 64 {
 		t.Errorf("cardRef.encodeTagRemove = %d bytes, exceeds Telegram 64-byte cap", got)
 	}
 	pState := pendingState{Limit: 99999, ExpDay: "2026-05-26"}.encode()

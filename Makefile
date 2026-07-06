@@ -31,8 +31,8 @@ build: ## Build both binaries (CGO disabled — same as production images).
 vet: ## go vet across the whole module.
 	$(GO) vet ./...
 
-lint: ## Run staticcheck (must already be installed: `go install honnef.co/go/tools/cmd/staticcheck@latest`).
-	staticcheck ./...
+lint: ## Run golangci-lint (CI pins v2.12.2 — install matching: https://golangci-lint.run/docs/welcome/install/).
+	golangci-lint run
 
 vuln: ## Reachable-vuln scan via govulncheck (CI uses v1.1.4 — install matching).
 	govulncheck ./...

@@ -53,6 +53,7 @@ func TestLocalesAreComplete(t *testing.T) {
 				"CardTagsBtn":        m.CardTagsBtn,
 				"CardToListBtn":      m.CardToListBtn,
 				"CardBackBtn":        m.CardBackBtn,
+				"TagListChanged":     m.TagListChanged,
 			} {
 				if got == "" {
 					t.Errorf("%s is empty", label)

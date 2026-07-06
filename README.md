@@ -4,7 +4,6 @@ Self-hosted Telegram voice journal with Claude analysis via MCP.
 
 [![CI](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml/badge.svg)](https://github.com/terraincognita07/voicelog/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/terraincognita07/voicelog/branch/main/graph/badge.svg)](https://codecov.io/gh/terraincognita07/voicelog)
-[![Go Report Card](https://goreportcard.com/badge/github.com/terraincognita07/voicelog)](https://goreportcard.com/report/github.com/terraincognita07/voicelog)
 [![Release](https://img.shields.io/github/v/release/terraincognita07/voicelog?display_name=tag)](https://github.com/terraincognita07/voicelog/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go)](https://go.dev/)
