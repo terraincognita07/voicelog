@@ -309,6 +309,29 @@ func TestTranscribeWAV_BadJSON(t *testing.T) {
 	}
 }
 
+// TestTranscribeWAV_OversizedResponseRejected: a success response larger
+// than maxResponseBytes must fail the decode instead of being buffered
+// whole into memory (and from there into the DB).
+func TestTranscribeWAV_OversizedResponseRejected(t *testing.T) {
+	old := maxResponseBytes
+	maxResponseBytes = 512
+	t.Cleanup(func() { maxResponseBytes = old })
+
+	huge := `{"text":"` + strings.Repeat("a", 2048) + `"}`
+	var cap capturedRequest
+	srv := fakeServer(t, http.StatusOK, huge, &cap)
+	c := &Client{URL: srv.URL, HTTP: srv.Client()}
+
+	_, err := c.transcribeWAV(context.Background(), writeTempWAV(t, "x"), "")
+	if err == nil {
+		t.Fatal("want decode error on oversized body, got nil")
+	}
+	// The operator-facing error must name the cap, not just "unexpected EOF".
+	if !strings.Contains(err.Error(), "cap") {
+		t.Errorf("err should mention the size cap, got: %v", err)
+	}
+}
+
 func TestTranscribeWAV_MissingFile(t *testing.T) {
 	// Server is never reached — file open fails first.
 	c := &Client{URL: "http://unused.invalid", HTTP: http.DefaultClient}

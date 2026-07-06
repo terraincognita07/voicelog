@@ -3,6 +3,8 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -56,11 +58,25 @@ func (r cardRef) encode() string {
 	return strconv.FormatInt(r.id, 10) + ":" + r.kind + ":" + r.state
 }
 
-// encodeTagRemove adds a tag index for the [tag ❌] buttons: `id:kind:idx:state`.
-// The tag itself isn't in the payload — a 64-char tag would blow the 64-byte
-// budget — so removal is by position in the note's (stable, alphabetical) list.
-func (r cardRef) encodeTagRemove(idx int) string {
-	return strconv.FormatInt(r.id, 10) + ":" + r.kind + ":" + strconv.Itoa(idx) + ":" + r.state
+// encodeTagRemove adds a tag index plus the tag's fingerprint for the
+// [tag ❌] buttons: `id:kind:idx:fp:state`. The tag itself isn't in the
+// payload — a 64-char tag would blow the 64-byte budget — so removal is by
+// position in the note's (stable, alphabetical) list. The fingerprint pins
+// the button to the tag it was rendered for: if the list shifts between
+// render and tap (a concurrent MCP untag_note, a rapid second tap), the
+// stale index would silently delete a neighbour without it.
+func (r cardRef) encodeTagRemove(idx int, tag string) string {
+	return strconv.FormatInt(r.id, 10) + ":" + r.kind + ":" + strconv.Itoa(idx) + ":" +
+		tagFingerprint(tag) + ":" + r.state
+}
+
+// tagFingerprint is a fixed-width 8-hex-char FNV-1a digest — short enough
+// for the 64-byte callback budget, collision-proof enough for "did this
+// exact tag stay at this index".
+func tagFingerprint(tag string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(tag))
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 func validCardKind(s string) bool { return s == "p" || s == "r" }
@@ -81,21 +97,21 @@ func parseCardRef(data string) (cardRef, bool) {
 	return cardRef{id: id, kind: parts[1], state: state}, true
 }
 
-func parseTagRemove(data string) (cardRef, int, bool) {
-	parts := strings.SplitN(strings.TrimSpace(data), ":", 4)
-	if len(parts) < 3 {
-		return cardRef{}, 0, false
+func parseTagRemove(data string) (ref cardRef, idx int, fp string, ok bool) {
+	parts := strings.SplitN(strings.TrimSpace(data), ":", 5)
+	if len(parts) < 4 {
+		return cardRef{}, 0, "", false
 	}
 	id, e1 := strconv.ParseInt(parts[0], 10, 64)
 	idx, e2 := strconv.Atoi(parts[2])
 	if e1 != nil || e2 != nil || id <= 0 || !validCardKind(parts[1]) {
-		return cardRef{}, 0, false
+		return cardRef{}, 0, "", false
 	}
 	state := ""
-	if len(parts) == 4 {
-		state = parts[3]
+	if len(parts) == 5 {
+		state = parts[4]
 	}
-	return cardRef{id: id, kind: parts[1], state: state}, idx, true
+	return cardRef{id: id, kind: parts[1], state: state}, idx, parts[3], true
 }
 
 // parseListRef decodes the `kind:state` payload of the card's "⬅ to list"
@@ -165,7 +181,7 @@ func (tb *Bot) renderCardTags(ctx context.Context, ref cardRef) (string, *tele.R
 	for i, tg := range tags {
 		b := cardTagRemoveBtn
 		b.Text = tg + " ❌"
-		b.Data = ref.encodeTagRemove(i)
+		b.Data = ref.encodeTagRemove(i, tg)
 		tagBtns = append(tagBtns, b)
 	}
 	rows := chunkButtons(tagBtns, 2)
@@ -293,7 +309,11 @@ func (tb *Bot) cbCardDeleteYes(c tele.Context) error {
 	if err := tb.deleteNote(ctx, ref.id); err != nil && !errors.Is(err, db.ErrNoteNotFound) {
 		return tb.errToast(c, "delete", err)
 	}
-	body, kb, err := tb.renderListByKind(ctx, ref.kind, ref.state)
+	// Fresh budget for the re-render (same rule as cbPendingClearYes): a slow
+	// delete must not starve the follow-up list render's DB deadline.
+	rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer rcancel()
+	body, kb, err := tb.renderListByKind(rctx, ref.kind, ref.state)
 	if err != nil {
 		return tb.errToast(c, "refresh", err)
 	}
@@ -306,7 +326,7 @@ func (tb *Bot) cbCardTagRemove(c tele.Context) error {
 	if cb == nil {
 		return nil
 	}
-	ref, idx, ok := parseTagRemove(cb.Data)
+	ref, idx, fp, ok := parseTagRemove(cb.Data)
 	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: tb.msg.BadID})
 	}
@@ -316,7 +336,12 @@ func (tb *Bot) cbCardTagRemove(c tele.Context) error {
 	if err != nil {
 		return tb.errToast(c, "refresh", err)
 	}
-	if idx >= 0 && idx < len(tags) {
+	// Compare-and-delete: the button's index is from the previous render; a
+	// concurrent tag change (MCP untag_note, a rapid second tap) shifts the
+	// list, so only delete when the tag at idx is still the one the button
+	// was rendered for. Otherwise just re-render and tell the user.
+	stale := idx < 0 || idx >= len(tags) || tagFingerprint(tags[idx]) != fp
+	if !stale {
 		if _, err := tb.db.RemoveTag(ctx, ref.id, tags[idx]); err != nil {
 			return tb.errToast(c, "tag rm", err)
 		}
@@ -326,6 +351,9 @@ func (tb *Bot) cbCardTagRemove(c tele.Context) error {
 		return tb.errToast(c, "refresh", err)
 	}
 	tb.editWithList(c, body, kb)
+	if stale {
+		return c.Respond(&tele.CallbackResponse{Text: tb.msg.TagListChanged})
+	}
 	return c.Respond()
 }
 

@@ -42,6 +42,13 @@ func New(url string) *Client {
 	}
 }
 
+// maxResponseBytes caps how much of a whisper success response we read.
+// Legitimate transcripts are tiny (even an hour of speech as verbose_json
+// stays well under 1 MB); the cap only keeps a misbehaving server from
+// streaming an unbounded body into memory and on into SQLite/FTS. Mirrors
+// the 1 KiB LimitReader on the error path. A var so tests can shrink it.
+var maxResponseBytes int64 = 32 << 20 // 32 MiB
+
 // Segment is a single whisper inference window. We rely on two
 // per-segment fields documented by whisper.cpp's verbose_json:
 //
@@ -155,8 +162,15 @@ func (c *Client) transcribeWAV(ctx context.Context, path, prompt string) (Result
 		return Result{}, fmt.Errorf("whisper http %d: %s", resp.StatusCode, body)
 	}
 
+	lr := &io.LimitedReader{R: resp.Body, N: maxResponseBytes}
 	var r Result
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	if err := json.NewDecoder(lr).Decode(&r); err != nil {
+		if lr.N == 0 {
+			// The reader ran out of budget mid-value: an oversized response,
+			// not malformed JSON. Say so — a bare "unexpected EOF" would hide
+			// the cap from the operator reading the log.
+			return Result{}, fmt.Errorf("decode json: response exceeded %d-byte cap: %w", maxResponseBytes, err)
+		}
 		return Result{}, fmt.Errorf("decode json: %w", err)
 	}
 	// One-time operator notice: if the server replied without per-segment
