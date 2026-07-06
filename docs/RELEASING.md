@@ -96,7 +96,8 @@ gate.
 
 ## Cutting the tag
 
-Run from a clean working tree on `main`:
+`main` only accepts changes through a pull request (repository ruleset),
+so the release commit rides a short-lived branch:
 
 ```bash
 # 1. Move [Unreleased] into a versioned heading.
@@ -107,12 +108,16 @@ Run from a clean working tree on `main`:
 #    Order subsections per Keep-a-Changelog: Added / Changed /
 #    Deprecated / Removed / Fixed / Security. Combine any duplicate
 #    headings that crept in during the cycle.
+git switch -c release/vX.Y.Z
 git add CHANGELOG.md
 git commit -m "release: vX.Y.Z"
+git push -u origin release/vX.Y.Z
+# open a PR, wait for CI, squash-merge it
 
-# 2. Tag.
+# 2. Tag the squash-merge commit on main (NOT the branch commit —
+#    squash rewrites the SHA).
+git switch main && git pull origin main
 git tag -a vX.Y.Z -m "voicelog vX.Y.Z"
-git push origin main
 git push origin vX.Y.Z
 ```
 

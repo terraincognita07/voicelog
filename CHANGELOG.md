@@ -9,6 +9,8 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+## [0.8.6] — 2026-07-07
+
 ### Changed
 
 - **CI: `golangci-lint` (pinned `v2.12.2`) replaces the standalone
@@ -16,6 +18,9 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
   `.golangci.yml`: standard set (errcheck, govet, ineffassign, staticcheck,
   unused) + misspell + gofmt. `make lint` now runs it locally. A
   `.gitattributes` (`eol=lf`) keeps Windows checkouts gofmt-clean.
+- **CI: every action is pinned to a full-length commit SHA** (tag kept as a
+  trailing comment for dependabot), satisfying the repo's
+  `sha_pinning_required` Actions policy that briefly broke all jobs.
 
 ### Fixed
 
