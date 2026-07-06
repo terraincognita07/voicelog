@@ -68,14 +68,11 @@ gate.
    MCP tool, bot UI, docs file moved) must be listed. Drop entries
    that turned out to be internal-only and got described too
    enthusiastically.
-6. **Go Report Card refresh.** Visit
-   <https://goreportcard.com/report/github.com/terraincognita07/voicelog>,
-   click "Refresh now" (the report is cached per commit and won't
-   pick up the release commit until you push it). Confirm the
-   grade is still A+ and the 6 sub-checks (gofmt, go_vet, gocyclo,
-   ineffassign, license, misspell) all stay 100%. A regression
-   on any of them is a release blocker; fix and re-push before
-   tagging.
+6. **Lint gate.** `make lint` (golangci-lint, pinned in CI) must be
+   clean. It replaced the retired Go Report Card check and covers the
+   same ground and more (gofmt, staticcheck, ineffassign, misspell,
+   errcheck, unused). A finding here is a release blocker; fix and
+   re-push before tagging.
 7. **Version bump decision.** Based on the CHANGELOG, pick MAJOR /
    MINOR / PATCH per the rules above. When in doubt, prefer the
    higher bump — easier to explain "we skipped v0.4 because v0.5

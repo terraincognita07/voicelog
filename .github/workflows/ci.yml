@@ -24,15 +24,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: staticcheck
-        uses: dominikh/staticcheck-action@v1
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pinned like the other gate tools (govulncheck, semgrep) so a fresh
-          # staticcheck release can't silently change the rule set and break an
-          # unrelated PR. 2026.1 is the first release with Go 1.26 support; bump
+          # linter release can't silently change the rule set and break an
+          # unrelated PR. Bundles staticcheck (the previous standalone step)
+          # plus the retired Go Report Card checks — see .golangci.yml. Bump
           # intentionally alongside the go.mod toolchain.
-          version: "2026.1"
-          install-go: false
+          version: v2.12.2
 
       - name: go build
         env:

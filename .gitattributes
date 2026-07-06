@@ -1,0 +1,4 @@
+# Force LF in working trees on every platform. Without this, Windows
+# checkouts with core.autocrlf=true smudge CRLF into *.go files and
+# gofmt / golangci-lint flag them locally while CI (Linux, LF) is clean.
+* text=auto eol=lf

@@ -540,7 +540,7 @@ func (tb *Bot) renderEditPick(ctx context.Context, pe *pendingEdit) (string, *te
 	var rows [][]tele.InlineButton
 	var numRow []tele.InlineButton
 	for i, p := range pos {
-		body.WriteString(fmt.Sprintf("\n%d. %s", i+1, snippetAround(n.RawText, p, len(pe.find), editPickWindow)))
+		fmt.Fprintf(&body, "\n%d. %s", i+1, snippetAround(n.RawText, p, len(pe.find), editPickWindow))
 		btn := editPickBtn
 		btn.Text = strconv.Itoa(i + 1)
 		btn.Data = editPickData(i, pe.noteID, pe.kind, pe.state)

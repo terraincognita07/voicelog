@@ -1,0 +1,39 @@
+version: "2"
+
+# Replaces two retired gates with one pinned tool (CI pins v2.12.2):
+#   - staticcheck (previously a standalone CI step) — bundled in the
+#     standard set below;
+#   - Go Report Card (service unreliable, badge removed) — its checks
+#     (gofmt, go_vet, ineffassign, misspell) are covered here.
+# Bump the pin intentionally alongside the go.mod toolchain, same policy
+# as govulncheck/semgrep.
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
+  enable:
+    - misspell
+  settings:
+    errcheck:
+      # Deferred-cleanup idioms where the error is deliberately dropped.
+      # Write-path Closes are NOT exempt as a class — close explicitly and
+      # check (see audio.SaveOriginal); these cover read/cleanup defers.
+      exclude-functions:
+        - (io.ReadCloser).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Conn).Close
+        - (*database/sql.Rows).Close
+        - os.Remove
+        - os.RemoveAll
+  exclusions:
+    rules:
+      # Tests drop errors on teardown (resp.Body.Close, os.Unsetenv, …) —
+      # noise, not signal.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

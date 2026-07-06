@@ -61,11 +61,17 @@ func SaveOriginal(srcPath, dir string, id int64) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open dst: %w", err)
 	}
-	defer dst.Close()
 	if _, err := io.Copy(dst, src); err != nil {
 		// Best-effort cleanup so we don't leave a half-written file.
+		_ = dst.Close()
 		_ = os.Remove(destPath)
 		return "", fmt.Errorf("copy audio: %w", err)
+	}
+	// Close explicitly, not deferred: on the write path a failed flush means
+	// a corrupt file — returning success here would leave a bad .oga behind.
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(destPath)
+		return "", fmt.Errorf("close audio dst: %w", err)
 	}
 	return rel, nil
 }

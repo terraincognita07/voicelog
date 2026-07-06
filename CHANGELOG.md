@@ -9,6 +9,33 @@ removal, env-var rename), MINOR for new features, PATCH for fixes.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI: `golangci-lint` (pinned `v2.12.2`) replaces the standalone
+  `staticcheck` step** and the retired Go Report Card badge/check. Config in
+  `.golangci.yml`: standard set (errcheck, govet, ineffassign, staticcheck,
+  unused) + misspell + gofmt. `make lint` now runs it locally. A
+  `.gitattributes` (`eol=lf`) keeps Windows checkouts gofmt-clean.
+
+### Fixed
+
+- **Tag removal can no longer delete a neighbouring tag after a concurrent
+  change.** The `[tag ❌]` button carried only a positional index; if the tag
+  list shifted between render and tap (Claude untagging via MCP, a rapid
+  second tap), the stale index silently removed the wrong tag. Buttons now
+  carry a fingerprint of the tag and the handler compare-and-deletes; a stale
+  tap refreshes the list with a toast instead. Old buttons from before the
+  upgrade degrade to the same safe no-op.
+- **"Clear all" and card-delete no longer show a spurious error after a slow
+  delete.** The follow-up list render got the remainder of the delete's 5s
+  budget; it now gets its own.
+- **A failed flush no longer leaves a corrupt retained audio file.**
+  `audio.SaveOriginal` closed the destination via `defer`, ignoring the
+  flush error; it now closes explicitly and removes the file on failure.
+- **whisper responses are capped at 32 MiB.** A misbehaving server can no
+  longer stream an unbounded body into memory and the DB; hitting the cap
+  fails with an explicit "exceeded cap" error.
+
 ## [0.8.5] — 2026-06-12
 
 ### Changed
